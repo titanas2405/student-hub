@@ -1,0 +1,11 @@
+# Personal data saved by "Save page structure for setup" (grades, profile): never commit
+captures/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
