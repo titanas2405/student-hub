@@ -42,6 +42,14 @@ function Install-WithWinget($id, $name) {   # not named 'winget': PowerShell wou
     Warn "$name could not be installed by winget (code $code)."
     return $false
 }
+function Find-WingetId($query) {   # the package ID winget lists for a search, e.g. for "ghostscript"
+    $lines = winget.exe search $query --source winget --accept-source-agreements 2>$null
+    foreach ($line in $lines) {
+        $match = [regex]::Match([string]$line, '\s([A-Za-z0-9-]+\.[A-Za-z0-9.-]*' + [regex]::Escape($query) + '[A-Za-z0-9.-]*)\s', 'IgnoreCase')
+        if ($match.Success) { return $match.Groups[1].Value }
+    }
+    return $null
+}
 function Find-Program($name) {   # the real program's full path, never a function or alias of the same name
     $found = Get-Command "$name.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($found) { return $found.Source }
@@ -98,7 +106,11 @@ Step 'LibreOffice, Ghostscript and Poppler (Word to PDF, PDF tools)'
 if (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe") { Info 'LibreOffice is already installed.' }
 else { Install-WithWinget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' | Out-Null }
 if ((Have gswin64c) -or (Test-Path "$env:ProgramFiles\gs")) { Info 'Ghostscript is already installed.' }
-else { Install-WithWinget 'ArtifexSoftware.GhostScript' 'Ghostscript' | Out-Null }
+elseif (Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue) {
+    $gsId = Find-WingetId 'ghostscript'
+    if ($gsId) { Install-WithWinget $gsId 'Ghostscript' | Out-Null }
+    else { Warn 'Ghostscript was not found in winget: get it from https://ghostscript.com/releases/' }
+}
 if (Have pdfinfo) { Info 'Poppler is already installed.' }
 elseif (Install-WithWinget 'oschwartz10612.Poppler' 'Poppler') {
     $poppler = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter pdfinfo.exe -ErrorAction SilentlyContinue | Select-Object -First 1

@@ -29,10 +29,10 @@ WINDOWS_PLACES = {
     "libreoffice": ["LibreOffice/program/soffice.exe"],
     "gswin64c": ["gs/*/bin/gswin64c.exe"],
     "gswin32c": ["gs/*/bin/gswin32c.exe"],
-    "pdfinfo": ["poppler*/Library/bin/pdfinfo.exe", "poppler*/bin/pdfinfo.exe"],
-    "pdfunite": ["poppler*/Library/bin/pdfunite.exe", "poppler*/bin/pdfunite.exe"],
-    "pdfseparate": ["poppler*/Library/bin/pdfseparate.exe", "poppler*/bin/pdfseparate.exe"],
-    "pdftotext": ["poppler*/Library/bin/pdftotext.exe", "poppler*/bin/pdftotext.exe"],
+    "pdfinfo": ["poppler*/Library/bin/pdfinfo.exe", "poppler*/bin/pdfinfo.exe", "Microsoft/WinGet/Packages/*Poppler*/poppler*/Library/bin/pdfinfo.exe"],
+    "pdfunite": ["poppler*/Library/bin/pdfunite.exe", "poppler*/bin/pdfunite.exe", "Microsoft/WinGet/Packages/*Poppler*/poppler*/Library/bin/pdfunite.exe"],
+    "pdfseparate": ["poppler*/Library/bin/pdfseparate.exe", "poppler*/bin/pdfseparate.exe", "Microsoft/WinGet/Packages/*Poppler*/poppler*/Library/bin/pdfseparate.exe"],
+    "pdftotext": ["poppler*/Library/bin/pdftotext.exe", "poppler*/bin/pdftotext.exe", "Microsoft/WinGet/Packages/*Poppler*/poppler*/Library/bin/pdftotext.exe"],
 }
 
 
