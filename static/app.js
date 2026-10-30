@@ -40,6 +40,7 @@ const ICONS = {
   open: "M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z",
   folder: "M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z",
   file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z",
+  wand: "M7.5 5.6 10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29a1 1 0 0 0-1.41 0L1.29 18.96a1 1 0 0 0 0 1.41l2.34 2.34a1 1 0 0 0 1.41 0L16.7 11.05a1 1 0 0 0 0-1.41l-2.33-2.35zm-1.03 5.49-2.12-2.12 2.44-2.44 2.12 2.12-2.44 2.44z",
   key: "M12.65 10A6 6 0 1 0 12.65 14H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z",
 };
 
@@ -100,6 +101,7 @@ const state = {
   grades: { status: "idle", data: null, error: "", semester: 0, showAll: true },
   studies: { tab: "", pages: {}, tabs: [], error: "" },
   ditlab: { status: "idle", username: "", reason: "", path: "/", items: [], results: null, emails: null, pick: null },
+  humanizer: { text: "", language: "same", tone: "student", level: "natural", length: "keep", notes: "", keepTerms: true },
   eclass: { enabled: false, status: "idle", error: "", courses: [], items: [], errors: [] },
   query: "",
 };
@@ -383,9 +385,15 @@ function navigate(view) {
   $("ditlab-view").hidden = view.type !== "ditlab";
   $("grades-view").hidden = view.type !== "grades";
   $("studies-view").hidden = view.type !== "studies";
+  $("tools-view").hidden = view.type !== "tools";
   renderDitlabNav();
+  renderToolsNav();
   renderStudiesNav();
-  if (view.type === "studies") {
+  if (view.type === "tools") {
+    $("view-title").textContent = "Humanizer";
+    $("view-sub").textContent = "Builds a prompt for ChatGPT, Claude or Gemini";
+    renderHumanizer();
+  } else if (view.type === "studies") {
     $("view-title").textContent = "Προπτυχιακές Σπουδές";
     loadStudies(state.studies.tab);
   } else if (view.type === "grades") {
@@ -1239,6 +1247,136 @@ async function disconnectDitlab() {
   openDitlab();
 }
 
+// ---------- Tools: Humanizer (builds a prompt to paste into an AI chat) ----------
+const HUMANIZER = {
+  language: { same: "Same as the original", en: "English", el: "Ελληνικά (Greek)" },
+  tone: {
+    student: "Natural student voice",
+    academic: "Academic, but readable",
+    casual: "Casual and friendly",
+    professional: "Professional (emails, CVs)",
+  },
+  level: { simple: "Simple and clear", natural: "Natural, varied", rich: "Rich, expressive" },
+  length: { keep: "Keep about the same", shorter: "Make it shorter", longer: "Expand a little" },
+};
+const TONE_RULES = {
+  student: "Write like a thoughtful university student explaining this in their own words: confident but not showy.",
+  academic: "Keep an academic register suitable for a university assignment, but make it flow like a real person wrote it, not a template.",
+  casual: "Use a relaxed, conversational tone, as if talking to a classmate.",
+  professional: "Use a polite, clear, professional tone suitable for emails to professors, applications or a CV.",
+};
+const LEVEL_RULES = {
+  simple: "Prefer short, plain sentences and everyday words.",
+  natural: "Mix short and longer sentences and use ordinary vocabulary.",
+  rich: "Use varied sentence structure and precise, expressive vocabulary, without sounding pretentious.",
+};
+const LENGTH_RULES = {
+  keep: "Keep the length roughly the same (within about 10%).",
+  shorter: "Make it noticeably more concise (about 20-30% shorter) without losing any key point.",
+  longer: "Expand it slightly (about 20% longer) with natural transitions or clarifications, but do not invent facts.",
+};
+
+function humanizerPrompt(o) {
+  const lang = o.language === "same" ? "Write in the same language as the original text."
+    : o.language === "el" ? "Write the result in natural, modern Greek (Ελληνικά), the way a native speaker writes."
+    : "Write the result in natural English, the way a native speaker writes.";
+  const rules = [
+    "Keep the original meaning, facts, arguments and structure. Do not add new claims, examples or sources.",
+    lang,
+    TONE_RULES[o.tone],
+    LEVEL_RULES[o.level],
+    LENGTH_RULES[o.length],
+    "Vary sentence length and rhythm; avoid starting sentences the same way.",
+    "Avoid typical AI-sounding phrases and filler such as \"delve\", \"in today's fast-paced world\", \"it is important to note\", \"furthermore\", \"moreover\", \"in conclusion\", \"a testament to\", \"navigate the complexities\", \"plays a crucial role\".",
+    "Avoid overusing em dashes, semicolons, lists of three and rhetorical questions. Don't add headings or bullet points that weren't in the original.",
+    "Prefer active voice and concrete wording over vague, generic statements.",
+  ];
+  if (o.keepTerms) rules.push("Keep technical terms, names, numbers, formulas, code and citations exactly as they are.");
+  if (o.notes.trim()) rules.push(o.notes.trim());
+  return [
+    "You are an experienced editor. Rewrite the text below so that it reads naturally, as if a real person wrote it, while staying faithful to the original.",
+    "",
+    "Rules:",
+    ...rules.map((r, i) => `${i + 1}. ${r}`),
+    "",
+    "Reply with only the rewritten text: no introduction, no explanation, no notes.",
+    "",
+    "Text:",
+    '"""',
+    o.text.trim() || "[paste your text here]",
+    '"""',
+  ].join("\n");
+}
+
+function renderToolsNav() {
+  const v = { type: "tools" };
+  $("nav-tools").replaceChildren(navItem({ label: "Humanizer", iconPath: ICONS.wand, active: isView(v), onclick: () => navigate(v) }));
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {                                   // e.g. clipboard permission denied
+    const ta = h("textarea", { style: "position:fixed;opacity:0" });
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+}
+
+function renderHumanizer() {
+  const o = state.humanizer;
+  const words = (t) => (t.trim().match(/\S+/g) || []).length;
+  const out = h("textarea", { class: "tool-text output", readonly: true, rows: 14, "aria-label": "Generated prompt" });
+  const count = h("span", { class: "muted" });
+  const update = () => {
+    out.value = humanizerPrompt(o);
+    count.textContent = `${words(o.text)} words`;
+  };
+  const select = (key, label) => h("label", { class: "field" }, h("span", {}, label),
+    (() => {
+      const s = h("select", { onchange: (e) => { o[key] = e.target.value; update(); } },
+        Object.entries(HUMANIZER[key]).map(([v, t]) => h("option", { value: v }, t)));
+      s.value = o[key];
+      return s;
+    })());
+  const input = h("textarea", { class: "tool-text", rows: 9, placeholder: "Paste the text you want to sound more natural…",
+    "aria-label": "Original text", oninput: (e) => { o.text = e.target.value; update(); } });
+  input.value = o.text;
+  const notes = h("input", { maxlength: "300", placeholder: "e.g. keep the first paragraph as is, use British spelling",
+    oninput: (e) => { o.notes = e.target.value; update(); } });
+  notes.value = o.notes;
+  const keep = h("input", { type: "checkbox", onchange: (e) => { o.keepTerms = e.target.checked; update(); } });
+  keep.checked = o.keepTerms;
+
+  const copy = async (then) => {
+    if (!o.text.trim()) { toast("Paste your text first"); input.focus(); return; }
+    await copyText(out.value);
+    toast(then ? "Prompt copied. Paste it into the chat." : "Prompt copied");
+    if (then) window.open(then, "_blank", "noopener,noreferrer");
+  };
+
+  update();
+  $("tools-body").replaceChildren(h("section", { class: "card setup tool" },
+    h("h2", {}, "Humanizer"),
+    h("p", { class: "lead" }, "Paste your text and choose the style. This builds a ready-made prompt that you copy into an AI chat, which rewrites the text so it reads naturally. Nothing is sent anywhere from here."),
+    h("label", { class: "field" }, h("span", { class: "row" }, "Your text", count), input),
+    h("div", { class: "tool-grid" },
+      select("language", "Language"), select("tone", "Tone"), select("level", "Vocabulary"), select("length", "Length")),
+    h("label", { class: "field" }, h("span", {}, "Extra instructions (optional)"), notes),
+    h("label", { class: "check" }, keep, "Keep technical terms, numbers, code and citations unchanged"),
+    h("label", { class: "field" }, h("span", {}, "Prompt"), out),
+    h("div", { class: "actions wrap" },
+      h("button", { class: "btn plain", onclick: () => { o.text = input.value = ""; update(); input.focus(); } }, "Clear"),
+      h("button", { class: "btn plain", onclick: () => copy("https://chatgpt.com/") }, "Copy & open ChatGPT ↗"),
+      h("button", { class: "btn plain", onclick: () => copy("https://claude.ai/new") }, "Copy & open Claude ↗"),
+      h("button", { class: "btn plain", onclick: () => copy("https://gemini.google.com/app") }, "Copy & open Gemini ↗"),
+      h("button", { class: "btn primary", onclick: () => copy() }, "Copy Prompt")),
+    h("p", { class: "hint" }, "Check your course's rules on AI use. Read the result yourself before you submit it.")));
+}
+
 // ---------- wiring ----------
 function init() {
   $("provider").addEventListener("change", applyProvider);
@@ -1268,6 +1406,7 @@ function init() {
     else if (state.view.type === "ditlab") openDitlab(true);
     else if (state.view.type === "grades") loadGrades(true);
     else if (state.view.type === "studies") loadStudies(state.studies.tab, true);
+    else if (state.view.type === "tools") renderHumanizer();
     else { loadAnnouncements(true); if (state.eclass.enabled) loadEclass(true); }
   });
   $("eclass-refresh").addEventListener("click", () => loadEclass(true));
@@ -1280,7 +1419,7 @@ function init() {
     else if (state.view.type === "ditlab") searchDitlab();
     else if (state.view.type === "grades") renderGrades();
     else if (state.view.type === "studies") renderStudies();
-    else searchAnn();
+    else if (state.view.type !== "tools") searchAnn();
   });
 
   document.addEventListener("keydown", (e) => {

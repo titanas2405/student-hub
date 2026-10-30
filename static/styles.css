@@ -431,3 +431,15 @@ summary { cursor: pointer; color: var(--accent); font-size: 13px; padding: 4px 2
 .doc details.acc[open] > summary::after { transform: rotate(90deg); }
 .doc details.acc > .acc-body { padding: 0 14px 6px; }
 .doc mark { background: rgba(255, 204, 0, .4); color: inherit; border-radius: 3px; }
+
+/* ---------- tools ---------- */
+.tool-text {
+  display: block; width: 100%; resize: vertical; padding: 10px 12px; line-height: 1.5;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); outline: none;
+}
+.tool-text:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tool-text.output { background: var(--bg-2); font: 13px ui-monospace, "SF Mono", Menlo, monospace; }
+.field span.row { display: flex; justify-content: space-between; }
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 12px; }
+.actions.wrap { flex-wrap: wrap; }
+.card.tool:hover { transform: none; }
