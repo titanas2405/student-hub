@@ -86,6 +86,23 @@ class WindowsProgramTests(unittest.TestCase):
             student_tools.checked_zip(buf.getvalue())
 
 
+class AICLITests(unittest.TestCase):
+    def test_windows_installs_outside_path_are_found(self):
+        import tempfile
+        import ai_cli
+        with tempfile.TemporaryDirectory() as home:
+            home = Path(home)
+            (home / ".local" / "bin").mkdir(parents=True)
+            (home / ".local" / "bin" / "claude.exe").write_bytes(b"")
+            (home / "npm").mkdir()
+            (home / "npm" / "codex.cmd").write_bytes(b"")
+            with patch.object(ai_cli.shutil, "which", lambda name: None), patch.object(ai_cli, "IS_WINDOWS", True), \
+                    patch.object(ai_cli.Path, "home", lambda: home), patch.dict(os.environ, {"APPDATA": str(home)}):
+                self.assertEqual(ai_cli.binary("claude"), str(home / ".local" / "bin" / "claude.exe"))
+                self.assertEqual(ai_cli.binary("chatgpt"), str(home / "npm" / "codex.cmd"))
+                self.assertEqual(ai_cli.binary("gemini"), str(home / ".local" / "bin" / "gemini.exe"))   # not installed
+
+
 class StartupTests(unittest.TestCase):
     def test_server_does_not_look_up_its_network_name(self):
         with patch.object(server.socket, "getfqdn", side_effect=AssertionError("slow DNS lookup")):

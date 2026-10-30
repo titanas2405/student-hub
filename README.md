@@ -17,7 +17,7 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
    `winget install Git.Git GitHub.cli` (Projects; then `gh auth login`), `winget install TheDocumentFoundation.LibreOffice`
    (Word → PDF), Ghostscript (PDF compression) and Poppler (PDF merge/split/text), and an AI CLI, which needs Node.js
    (`winget install OpenJS.NodeJS.LTS`): `npm install -g @anthropic-ai/claude-code`, `@google/gemini-cli` or `@openai/codex`,
-   then sign in once in a terminal. LibreOffice and Ghostscript are found in `Program Files` even if they aren't on PATH.
+   then sign in once in a terminal. Claude Code's own installer (`irm https://claude.ai/install.ps1 | iex`) also works; Student Hub finds `%USERPROFILE%\.local\bin\claude.exe` and npm's `%APPDATA%\npm\*.cmd` even when they aren't on PATH. LibreOffice and Ghostscript are found in `Program Files` even if they aren't on PATH.
 
 **Certificate errors on Windows** (e.g. *SSLCertVerificationError* for imap.uoa.gr): Python reads the Windows
 certificate store, and Windows only downloads a root certificate the first time Windows itself needs it, so Greek

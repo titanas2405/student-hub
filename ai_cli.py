@@ -14,6 +14,9 @@ PROVIDERS = {"claude": ("Claude", "claude"), "gemini": ("Gemini", "gemini"),
              "antigravity": ("Google Antigravity CLI", "agy")}
 
 
+IS_WINDOWS = os.name == "nt"
+
+
 def binary(provider):
     name = PROVIDERS[provider][1]
     if provider == "antigravity":
@@ -30,6 +33,12 @@ def binary(provider):
                 return str(Path(local_app_data) / "agy" / "bin" / "agy.exe")
             return str(Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe")
         return str(Path.home() / ".local" / "bin" / name)
+    if IS_WINDOWS:
+        # Installers that don't add themselves to PATH: Claude's native installer (~/.local/bin/claude.exe) and
+        # npm's global folder (%APPDATA%\npm\codex.cmd, gemini.cmd, claude.cmd).
+        npm = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "npm"
+        places = [Path.home() / ".local" / "bin" / f"{name}.exe", npm / f"{name}.cmd", npm / f"{name}.exe"]
+        return str(next((p for p in places if p.is_file()), places[0]))
     return str(Path.home() / ".local" / "bin" / name)
 
 
