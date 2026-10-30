@@ -32,7 +32,7 @@ function frontend(savedCategory = '') {
     Blob, Response, FormData, TextEncoder, TextDecoder, Uint8Array, Uint32Array, DataView, Set, Math, Number,
     Date:class extends Date { static now(){return now;} },
     setInterval:fn=>{intervals.set(++nextInterval,fn);return nextInterval;},clearInterval:id=>intervals.delete(id),toast(){},
-    downloadToolFile(){}, document:{}, URL, setTimeout, clearTimeout,
+    downloadToolFile(){}, copyText:async()=>{}, document:{}, URL, setTimeout, clearTimeout,
   };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../static/tools.js'),'utf8'),ctx);
@@ -46,7 +46,7 @@ test('tools have six accessible categories; switching preserves inputs and resto
   assert.equal(ui.all().filter(n=>n.attrs.role==='tab').length,6);
   assert.equal(ui.elements['tools-panel-images'].hidden,false);
   assert.equal(ui.elements['tools-panel-documents'].hidden,true);
-  assert.equal(ui.all().filter(n=>n.tag==='h2').length,12);
+  assert.equal(ui.all().filter(n=>n.tag==='h2').length,13);
   const text=ui.find(n=>n.attrs['aria-label']==='Text to count');text.value='My notes';
   ui.elements['tools-tab-text'].events.click();
   assert.equal(ui.elements['tools-tab-text'].attrs['aria-selected'],'true');
@@ -93,4 +93,21 @@ test('study timer preserves elapsed time across tabs, pause/resume and completio
   ui.setNow(120000);[...ui.intervals.values()][0]();
   assert.equal(clock.textContent,'00:00');assert.equal(ui.intervals.size,0);
   assert.equal(start.textContent,'Start');
+});
+
+test('humanizer prompt includes the text and chosen style, and updates as options change',()=>{
+  const {ctx}=frontend();
+  const prompt=ctx.humanizerPrompt({text:'  Recursion is useful.  ',language:'el',tone:'academic',length:'shorter',notes:'Use short paragraphs.'});
+  assert.match(prompt,/modern Greek/);assert.match(prompt,/academic register/);assert.match(prompt,/more concise/);
+  assert.match(prompt,/Keep technical terms/);assert.match(prompt,/Use short paragraphs\./);
+  assert.match(prompt,/"""\nRecursion is useful\.\n"""$/);
+  assert.doesNotMatch(ctx.humanizerPrompt({text:'x',keepTerms:false}),/Keep technical terms/);
+  assert.match(ctx.humanizerPrompt(),/\[paste your text here\]/);
+  const ui=frontend('Text');ui.ctx.renderTools();
+  const input=ui.find(n=>n.attrs['aria-label']==='Text to humanize');
+  const output=ui.find(n=>n.attrs['aria-label']==='Generated humanizer prompt');
+  input.value='My essay';input.events.input();
+  assert.match(output.value,/"""\nMy essay\n"""/);
+  const tone=ui.find(n=>n.attrs['aria-label']==='Tone');tone.value='casual';tone.events.change();
+  assert.match(output.value,/conversational tone/);
 });

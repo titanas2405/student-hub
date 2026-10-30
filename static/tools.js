@@ -324,13 +324,101 @@ function studyTimerCard(card) {
     h("div", { class: "tool-actions" }, button, h("button", { type: "button", class: "btn", onclick: reset }, "Reset")), status);
 }
 
+const HUMANIZER_OPTIONS = {
+  language: { same: "Same as the original", en: "English", el: "Ελληνικά (Greek)" },
+  tone: { student: "Natural student voice", academic: "Academic, but readable", casual: "Casual and friendly", professional: "Professional (emails, CVs)" },
+  level: { simple: "Simple and clear", natural: "Natural, varied", rich: "Rich, expressive" },
+  length: { keep: "Keep about the same", shorter: "Make it shorter", longer: "Expand a little" },
+};
+const HUMANIZER_RULES = {
+  language: {
+    same: "Write in the same language as the original text.",
+    en: "Write the result in natural English, the way a native speaker writes.",
+    el: "Write the result in natural, modern Greek (Ελληνικά), the way a native speaker writes.",
+  },
+  tone: {
+    student: "Write like a thoughtful university student explaining this in their own words: confident but not showy.",
+    academic: "Keep an academic register suitable for a university assignment, but make it flow like a real person wrote it, not a template.",
+    casual: "Use a relaxed, conversational tone, as if talking to a classmate.",
+    professional: "Use a polite, clear, professional tone suitable for emails to professors, applications or a CV.",
+  },
+  level: {
+    simple: "Prefer short, plain sentences and everyday words.",
+    natural: "Mix short and longer sentences and use ordinary vocabulary.",
+    rich: "Use varied sentence structure and precise, expressive vocabulary, without sounding pretentious.",
+  },
+  length: {
+    keep: "Keep the length roughly the same (within about 10%).",
+    shorter: "Make it noticeably more concise (about 20-30% shorter) without losing any key point.",
+    longer: "Expand it slightly (about 20% longer) with natural transitions or clarifications, but do not invent facts.",
+  },
+};
+
+// Builds the prompt only; the user pastes it into the AI chat of their choice.
+function humanizerPrompt({ text = "", language = "same", tone = "student", level = "natural", length = "keep", keepTerms = true, notes = "" } = {}) {
+  const pick = (kind, key) => HUMANIZER_RULES[kind][key] || Object.values(HUMANIZER_RULES[kind])[0];
+  const rules = [
+    "Keep the original meaning, facts, arguments and structure. Do not add new claims, examples or sources.",
+    pick("language", language), pick("tone", tone), pick("level", level), pick("length", length),
+    "Vary sentence length and rhythm; avoid starting sentences the same way.",
+    'Avoid typical AI-sounding phrases and filler such as "delve", "in today\'s fast-paced world", "it is important to note", "furthermore", "moreover", "in conclusion", "a testament to", "navigate the complexities", "plays a crucial role".',
+    "Avoid overusing em dashes, semicolons, lists of three and rhetorical questions. Don't add headings or bullet points that weren't in the original.",
+    "Prefer active voice and concrete wording over vague, generic statements.",
+  ];
+  if (keepTerms) rules.push("Keep technical terms, names, numbers, formulas, code and citations exactly as they are.");
+  if (notes.trim()) rules.push(notes.trim());
+  return [
+    "You are an experienced editor. Rewrite the text below so that it reads naturally, as if a real person wrote it, while staying faithful to the original.",
+    "", "Rules:", ...rules.map((rule, i) => `${i + 1}. ${rule}`), "",
+    "Reply with only the rewritten text: no introduction, no explanation, no notes.", "",
+    "Text:", '"""', text.trim() || "[paste your text here]", '"""',
+  ].join("\n");
+}
+
+function humanizerToolCard(card) {
+  const options = { text: "", language: "same", tone: "student", level: "natural", length: "keep", keepTerms: true, notes: "" };
+  const input = h("textarea", { rows: "8", placeholder: "Paste the text you want to sound more natural…", "aria-label": "Text to humanize" });
+  const output = h("textarea", { rows: "10", readonly: true, class: "tool-prompt", "aria-label": "Generated humanizer prompt" });
+  const status = toolStatus();
+  const update = () => { output.value = humanizerPrompt(options); };
+  const choice = (key, label) => {
+    const select = h("select", { "aria-label": label }, Object.entries(HUMANIZER_OPTIONS[key]).map(([value, text]) => h("option", { value }, text)));
+    select.value = options[key];
+    select.addEventListener("change", () => { options[key] = select.value; update(); });
+    return toolField(label, select);
+  };
+  const notes = h("input", { type: "text", maxlength: "300", placeholder: "e.g. use British spelling", "aria-label": "Extra instructions" });
+  const keep = h("input", { type: "checkbox", checked: true, "aria-label": "Keep technical terms unchanged" });
+  input.addEventListener("input", () => { options.text = input.value; update(); });
+  notes.addEventListener("input", () => { options.notes = notes.value; update(); });
+  keep.addEventListener("change", () => { options.keepTerms = keep.checked; update(); });
+  const copy = async (site) => {
+    if (!options.text.trim()) { status.textContent = "Paste your text first."; return; }
+    await copyText(output.value);
+    status.textContent = site ? "Prompt copied. Paste it into the chat that just opened." : "Prompt copied. Paste it into ChatGPT, Claude or Gemini.";
+    if (site) window.open(site, "_blank", "noopener,noreferrer");
+  };
+  update();
+  return card("Humanizer", "Builds a prompt that asks an AI chat to rewrite your text so it reads naturally. Paste your text, choose the style, then copy the prompt. Nothing is sent anywhere from here. Check your course's rules on AI use.",
+    input, choice("language", "Language"), choice("tone", "Tone"), choice("level", "Vocabulary"), choice("length", "Length"),
+    toolField("Extra instructions (optional)", notes),
+    h("label", { class: "check" }, keep, "Keep technical terms, numbers, code and citations unchanged"),
+    toolField("Prompt", output),
+    h("div", { class: "tool-actions" },
+      h("button", { type: "button", class: "btn primary", onclick: () => copy() }, "Copy prompt"),
+      h("button", { type: "button", class: "btn", onclick: () => copy("https://chatgpt.com/") }, "Copy & open ChatGPT ↗"),
+      h("button", { type: "button", class: "btn", onclick: () => copy("https://claude.ai/new") }, "Copy & open Claude ↗"),
+      h("button", { type: "button", class: "btn", onclick: () => copy("https://gemini.google.com/app") }, "Copy & open Gemini ↗")),
+    status);
+}
+
 function additionalToolGroups(card, capabilities) {
   const [pdfCompressor, pdfEditor, imagePdf] = pdfToolCards(card, capabilities);
   return {
     Documents: [pdfCompressor, pdfEditor],
     Images: [imagePdf],
     Archives: [archiveToolCard(card)],
-    Text: [],
+    Text: [humanizerToolCard(card)],
     Study: [studyTimerCard(card), gradeToolCard(card)],
     Converters: [unitToolCard(card)],
   };

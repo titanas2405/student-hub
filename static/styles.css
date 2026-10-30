@@ -1422,3 +1422,5 @@ a.piazza-title:hover { color: var(--accent); }
 .announcement-pager .btn { min-width: 36px; }
 .announcement-pager .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .announcement-pager .btn:disabled { opacity: .45; cursor: default; }
+.tool-card textarea.tool-prompt { background: var(--bg-2); font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; line-height: 1.5; }
+.tool-card .check input { display: inline-block; width: auto; margin: 0; }
