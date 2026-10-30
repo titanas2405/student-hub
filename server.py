@@ -30,6 +30,7 @@ import uuid
 import student_tools
 import ai_cli
 import student_assistant
+import project_humanizer
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -3663,6 +3664,146 @@ def _project(pid):
     return p
 
 
+class ProjectHumanizer:
+    """Rewrites the prose of a project (README/Markdown/text files and code comments) with the chosen AI.
+    Only the prose is sent; project_humanizer puts the rewrites back and refuses any change to the code.
+    Nothing is written until the student picks the files to apply, and a file changed meanwhile is left alone."""
+    jobs = {}
+    folder = INSTRUCTOR_DIR.parent / "humanizer"
+    BATCH_CHARS = 24_000
+    SCHEMA = {"type": "object", "properties": {"segments": {"type": "array", "items": {"type": "object", "properties": {
+        "id": {"type": "string"}, "text": {"type": "string"}}, "required": ["id", "text"]}}}, "required": ["segments"]}
+    PROMPT = """You are an experienced editor. Make the prose in a software project read naturally, as if a real person wrote it.
+You receive a JSON array of segments. Each has an id, the file it comes from, a kind and the text:
+- "document": a whole README, Markdown or text file.
+- "comment": the text of a code comment, without its comment markers. It may span several lines.
+- "inline": a one-line comment next to code. Keep it on one line and about as short.
+
+Style rules:
+{rules}
+
+Project rules (these always win over the style rules):
+- Edit prose only. Never add, remove or change code, commands, identifiers, file names, paths, URLs, version numbers, @tags (such as @param x) or TODO/FIXME markers.
+- In documents keep the Markdown structure: the same headings, lists, tables, links and images, and every code block and `inline code` exactly as written.
+- A comment must still describe the same code accurately and stay plain comment text: no comment markers such as /* */, // or #, and no code.
+- If a segment already reads naturally, or you are unsure, return it unchanged.
+
+Return every id exactly once, as {{"segments": [{{"id": "...", "text": "..."}}]}}."""
+
+    @classmethod
+    def public(cls, job):
+        return {k: v for k, v in job.items() if k not in ("proc", "pending", "settings", "root")}
+
+    @classmethod
+    def start(cls, p, files, rules):
+        if not ai_available():
+            raise ApiError(501, "Install and sign in to the selected AI CLI (see README)")
+        root = Path(p["path"])
+        if not root.is_dir():
+            raise ApiError(409, "Αυτό το project δεν έχει τοπικό αντίγραφο σε αυτόν τον υπολογιστή· άνοιξέ το πρώτα")
+        if any(j["project"] == p["id"] and j["status"] == "running" for j in cls.jobs.values()):
+            raise ApiError(409, "Ο humanizer ήδη δουλεύει σε αυτό το project")
+        for old in sorted(cls.jobs, key=lambda k: cls.jobs[k]["created"])[:-9]:
+            if cls.jobs[old]["status"] != "running":
+                cls.jobs.pop(old, None)
+        job = {"id": secrets.token_hex(8), "project": p["id"], "status": "running", "done": 0, "total": 0, "error": "",
+               "files": [], "pending": {}, "proc": None, "settings": ai_settings(), "root": str(root), "created": time.time()}
+        cls.jobs[job["id"]] = job
+        threading.Thread(target=cls._run, args=(job, files, rules), daemon=True).start()
+        return job["id"]
+
+    @classmethod
+    def _run(cls, job, files, rules):
+        try:
+            loaded = []
+            for name in files:
+                try:
+                    content = project_humanizer.read_text(project_humanizer.safe_path(job["root"], name))
+                    segs = project_humanizer.segments_for(name, content)
+                except (ValueError, UnicodeDecodeError, SyntaxError, project_humanizer.tokenize.TokenError, OSError):
+                    continue
+                if segs:
+                    loaded.append((name, content, segs))
+            if not loaded:
+                raise RuntimeError("Δεν βρέθηκε κείμενο ή σχόλια για αλλαγή στα αρχεία που διάλεξες")
+            batches, batch, size = [], [], 0
+            for fi, (name, _, segs) in enumerate(loaded):
+                for si, (_, _, text, kind, _) in enumerate(segs):
+                    if batch and size + len(text) > cls.BATCH_CHARS:
+                        batches.append(batch)
+                        batch, size = [], 0
+                    batch.append({"id": f"{fi}.{si}", "file": name, "kind": kind, "text": text})
+                    size += len(text)
+            batches.append(batch)
+            job["total"] = len(batches)
+            prompt = cls.PROMPT.format(rules="\n".join(f"- {r}" for r in rules))
+            answers = {}
+            for batch in batches:
+                if job["status"] != "running":
+                    return
+                result = run_ai([{"type": "text", "text": prompt},
+                                 {"type": "text", "text": "SEGMENTS\n" + json.dumps(batch, ensure_ascii=False)}],
+                                cls.folder, job["settings"], schema=cls.SCHEMA, on_proc=lambda proc: job.update(proc=proc))
+                asked = {b["id"] for b in batch}
+                for seg in result["structured_output"].get("segments") or []:
+                    if isinstance(seg, dict) and seg.get("id") in asked and isinstance(seg.get("text"), str):
+                        fi, si = map(int, seg["id"].split("."))
+                        answers[(fi, si)] = seg["text"]
+                job["done"] += 1
+            for fi, (name, content, segs) in enumerate(loaded):
+                after, skipped = project_humanizer.rewrite(name, content, {si: answers[(fi, si)] for si in range(len(segs)) if (fi, si) in answers})
+                job["files"].append({"path": name, "changed": after != content, "skipped": skipped,
+                                     "diff": project_humanizer.diff(name, content, after)[:200_000]})
+                if after != content:
+                    job["pending"][name] = (project_humanizer.sha(content), after)
+            job["status"] = "done"
+        except Exception as e:                          # shown to the student; unexpected ones are logged too
+            if not isinstance(e, RuntimeError):
+                traceback.print_exc()
+            if job["status"] == "running":
+                job.update(status="error", error=str(e)[:400] or "Κάτι πήγε στραβά")
+        finally:
+            job["proc"] = None
+
+    @classmethod
+    def cancel(cls, jid):
+        job = cls.jobs.get(jid)
+        if job and job["status"] == "running":
+            job["status"] = "cancelled"
+            proc = job.get("proc")
+            if proc and proc.poll() is None:
+                proc.kill()
+
+    @classmethod
+    def apply(cls, jid, names):
+        job = cls.jobs.get(jid)
+        if not job or job["status"] != "done":
+            raise ApiError(404, "Αυτή η επεξεργασία δεν είναι διαθέσιμη· τρέξε ξανά τον humanizer")
+        written, conflicts = [], []
+        for name in names:
+            if name not in job["pending"]:
+                continue
+            before, after = job["pending"][name]
+            try:
+                path = project_humanizer.safe_path(job["root"], name)
+                if project_humanizer.sha(project_humanizer.read_text(path)) != before:
+                    conflicts.append(name)               # edited since the rewrite: never overwrite the student's work
+                    continue
+                tmp = path.with_name(f".{path.name}.humanizer-tmp")
+                tmp.write_bytes(after.encode("utf-8"))
+                shutil.copymode(path, tmp)
+                os.replace(tmp, path)
+            except (ValueError, UnicodeDecodeError, OSError):
+                conflicts.append(name)
+                continue
+            written.append(name)
+            del job["pending"][name]
+            for f in job["files"]:
+                if f["path"] == name:
+                    f["applied"] = True
+        return {"written": written, "conflicts": conflicts}
+
+
 def git_state(path):
     """Branch, local changes, commits not pushed/pulled, and the last commit of a local copy."""
     if not (Path(path) / ".git").is_dir():
@@ -5775,6 +5916,51 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Unknown action")
         _gh_cache.pop(("repo", p["repo"]), None)
         self._json(200, {"output": out.strip()[-500:], "git": git_state(p["path"])})
+
+    def api_get_projects_humanize(self, q):
+        """Without id: the projects with a local copy. With id: the files whose text or comments can be humanized."""
+        self._session()
+        pid = (q.get("id") or [""])[0]
+        if not pid:
+            projects = [{"id": p["id"], "name": p["name"], "local": Path(p["path"]).is_dir()} for p in _projects()]
+            settings = ai_settings()
+            return self._json(200, {"projects": projects, "ai": ai_available(),
+                                    "provider": settings["providers"][settings["provider"]]["label"]})
+        p = _project(pid)
+        if not Path(p["path"]).is_dir():
+            raise ApiError(409, "Αυτό το project δεν έχει τοπικό αντίγραφο σε αυτόν τον υπολογιστή· άνοιξέ το πρώτα")
+        self._json(200, {"files": project_humanizer.scan(p["path"], GIT), "path": p["path"]})
+
+    def api_post_projects_humanize(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        b = self._read_json()
+        p = _project(str(b.get("id") or ""))
+        files = [str(f) for f in (b.get("files") or []) if isinstance(f, str)][:project_humanizer.MAX_FILES]
+        rules = [str(r).strip()[:500] for r in (b.get("rules") or []) if str(r).strip()][:20]
+        if not files:
+            raise ApiError(400, "Διάλεξε τουλάχιστον ένα αρχείο")
+        self._json(200, {"job": ProjectHumanizer.start(p, files, rules)})
+
+    def api_get_projects_humanize_job(self, q):
+        self._session()
+        job = ProjectHumanizer.jobs.get((q.get("id") or [""])[0])
+        if not job:
+            raise ApiError(404, "Unknown job")
+        self._json(200, ProjectHumanizer.public(job))
+
+    def api_post_projects_humanize_cancel(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        ProjectHumanizer.cancel(str(self._read_json().get("job") or ""))
+        self._json(200, {"ok": True})
+
+    def api_post_projects_humanize_apply(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        b = self._read_json()
+        names = [str(f) for f in (b.get("files") or []) if isinstance(f, str)]
+        self._json(200, ProjectHumanizer.apply(str(b.get("job") or ""), names))
 
     def api_delete_projects(self, q):
         """Removes a project from the list only: the repository on GitHub and the local folder are kept."""

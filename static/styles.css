@@ -1424,3 +1424,14 @@ a.piazza-title:hover { color: var(--accent); }
 .announcement-pager .btn:disabled { opacity: .45; cursor: default; }
 .tool-card textarea.tool-prompt { background: var(--bg-2); font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; line-height: 1.5; }
 .tool-card .check input { display: inline-block; width: auto; margin: 0; }
+.tool-check-list { max-height: 220px; overflow: auto; margin: 6px 0 10px; }
+.tool-check-list .check, .tool-result summary { display: flex; align-items: baseline; gap: 8px; overflow-wrap: anywhere; }
+.tool-result { border-top: 1px solid var(--line); padding: 8px 0; }
+.tool-result summary { cursor: pointer; }
+.tool-card .tool-result input, .tool-card .tool-check-list input { display: inline-block; width: auto; margin: 0; flex: none; }
+.tool-diff { max-height: 360px; overflow: auto; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; background: var(--bg-2); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-diff .add { color: #1f9d55; background: rgba(52, 199, 89, .12); }
+.tool-diff .del { color: #d70015; background: rgba(255, 59, 48, .10); }
+.tool-diff .hunk { color: var(--text-2); }
+@media (prefers-color-scheme: dark) { .tool-diff .add { color: #30d158; } .tool-diff .del { color: #ff453a; } }
+.tool-card-wide { grid-column: 1 / -1; }

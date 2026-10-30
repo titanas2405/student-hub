@@ -354,8 +354,7 @@ const HUMANIZER_RULES = {
   },
 };
 
-// Builds the prompt only; the user pastes it into the AI chat of their choice.
-function humanizerPrompt({ text = "", language = "same", tone = "student", level = "natural", length = "keep", keepTerms = true, notes = "" } = {}) {
+function humanizerRules({ language = "same", tone = "student", level = "natural", length = "keep", keepTerms = true, notes = "" } = {}) {
   const pick = (kind, key) => HUMANIZER_RULES[kind][key] || Object.values(HUMANIZER_RULES[kind])[0];
   const rules = [
     "Keep the original meaning, facts, arguments and structure. Do not add new claims, examples or sources.",
@@ -367,12 +366,24 @@ function humanizerPrompt({ text = "", language = "same", tone = "student", level
   ];
   if (keepTerms) rules.push("Keep technical terms, names, numbers, formulas, code and citations exactly as they are.");
   if (notes.trim()) rules.push(notes.trim());
+  return rules;
+}
+
+// Builds the prompt only; the user pastes it into the AI chat of their choice.
+function humanizerPrompt(options = {}) {
   return [
     "You are an experienced editor. Rewrite the text below so that it reads naturally, as if a real person wrote it, while staying faithful to the original.",
-    "", "Rules:", ...rules.map((rule, i) => `${i + 1}. ${rule}`), "",
+    "", "Rules:", ...humanizerRules(options).map((rule, i) => `${i + 1}. ${rule}`), "",
     "Reply with only the rewritten text: no introduction, no explanation, no notes.", "",
-    "Text:", '"""', text.trim() || "[paste your text here]", '"""',
+    "Text:", '"""', (options.text || "").trim() || "[paste your text here]", '"""',
   ].join("\n");
+}
+
+function humanizerChoice(options, key, label, onchange) {
+  const select = h("select", { "aria-label": label }, Object.entries(HUMANIZER_OPTIONS[key]).map(([value, text]) => h("option", { value }, text)));
+  select.value = options[key];
+  select.addEventListener("change", () => { options[key] = select.value; onchange(); });
+  return toolField(label, select);
 }
 
 function humanizerToolCard(card) {
@@ -381,12 +392,7 @@ function humanizerToolCard(card) {
   const output = h("textarea", { rows: "10", readonly: true, class: "tool-prompt", "aria-label": "Generated humanizer prompt" });
   const status = toolStatus();
   const update = () => { output.value = humanizerPrompt(options); };
-  const choice = (key, label) => {
-    const select = h("select", { "aria-label": label }, Object.entries(HUMANIZER_OPTIONS[key]).map(([value, text]) => h("option", { value }, text)));
-    select.value = options[key];
-    select.addEventListener("change", () => { options[key] = select.value; update(); });
-    return toolField(label, select);
-  };
+  const choice = (key, label) => humanizerChoice(options, key, label, update);
   const notes = h("input", { type: "text", maxlength: "300", placeholder: "e.g. use British spelling", "aria-label": "Extra instructions" });
   const keep = h("input", { type: "checkbox", checked: true, "aria-label": "Keep technical terms unchanged" });
   input.addEventListener("input", () => { options.text = input.value; update(); });
@@ -412,13 +418,117 @@ function humanizerToolCard(card) {
     status);
 }
 
+function humanizerDiff(text) {
+  return h("pre", { class: "tool-diff" }, text.split("\n").filter((line) => !/^(---|\+\+\+) /.test(line)).map((line) =>
+    h("span", { class: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "" }, line + "\n")));
+}
+
+// Rewrites only README/Markdown/text files and code comments of a project; the server refuses any change to code.
+function projectHumanizerCard(card) {
+  const options = { language: "same", tone: "student", level: "natural", length: "keep", keepTerms: true, notes: "" };
+  const project = h("select", { "aria-label": "Project to humanize" }, h("option", { value: "" }, "Loading projects…"));
+  const findButton = h("button", { type: "button", class: "btn", disabled: true }, "Find files");
+  const fileList = h("div", { class: "tool-check-list" });
+  const notes = h("input", { type: "text", maxlength: "300", placeholder: "e.g. write the comments in English", "aria-label": "Extra instructions for the project" });
+  notes.addEventListener("input", () => { options.notes = notes.value; });
+  const runButton = h("button", { type: "button", class: "btn primary", disabled: true }, "Rewrite with AI");
+  const cancelButton = h("button", { type: "button", class: "btn", hidden: true }, "Cancel");
+  const status = toolStatus();
+  const results = h("div", { class: "tool-results" });
+  const applyButton = h("button", { type: "button", class: "btn primary", hidden: true }, "Apply selected changes");
+  let files = [], jobId = "", poll = 0;
+  const projectName = () => project.selectedOptions?.[0]?.textContent || "the project";
+
+  api("/api/projects/humanize").then((data) => {
+    const local = (data.projects || []).filter((p) => p.local);
+    fill(project, local.length ? local.map((p) => h("option", { value: p.id }, p.name)) : [h("option", { value: "" }, "No projects on this computer")]);
+    project.value = local[0]?.id || "";
+    findButton.disabled = !project.value;
+    if (!data.projects?.length) status.textContent = "Create or connect a project in Projects first.";
+    else if (data.ai === false) status.textContent = `Install and sign in to ${data.provider || "an AI CLI"} to rewrite with AI (see README).`;
+  }).catch((err) => { fill(project, h("option", { value: "" }, "Couldn't load projects")); status.textContent = err.message; });
+
+  const selected = () => files.filter((f) => f.box.checked).map((f) => f.path);
+  const reset = () => { files = []; fill(fileList); fill(results); runButton.disabled = true; applyButton.hidden = true; status.textContent = ""; };
+  project.addEventListener("change", reset);
+  findButton.addEventListener("click", async () => {
+    reset(); findButton.disabled = true; status.textContent = "Looking for README, text files and comments…";
+    try {
+      const data = await api("/api/projects/humanize?id=" + encodeURIComponent(project.value));
+      files = (data.files || []).map((f) => ({ ...f, box: h("input", { type: "checkbox", checked: true, "aria-label": `Include ${f.path}` }) }));
+      fill(fileList, files.map((f) => h("label", { class: "check" }, f.box, h("span", {}, f.path,
+        h("small", { class: "muted" }, f.kind === "text" ? " · whole text" : ` · ${f.segments} comment${f.segments === 1 ? "" : "s"}`)))));
+      runButton.disabled = !files.length;
+      status.textContent = files.length ? `${files.length} files with text or comments. Untick any you want to leave alone.`
+        : "No README, text files or prose comments found in this project.";
+    } catch (err) { status.textContent = err.message; }
+    finally { findButton.disabled = !project.value; }
+  });
+
+  const showResults = (job) => {
+    const changed = job.files.filter((f) => f.changed);
+    fill(results, job.files.map((f) => {
+      const box = h("input", { type: "checkbox", checked: f.changed && !f.applied, disabled: !f.changed || f.applied, "data-path": f.path, "aria-label": `Apply ${f.path}` });
+      return h("details", { class: "tool-result", open: job.files.length <= 3 && f.changed },
+        h("summary", {}, box, h("span", {}, f.path), h("small", { class: "muted" }, f.applied ? " · applied" : f.changed ? " · changed" : " · no change")),
+        f.skipped.length ? h("ul", { class: "muted" }, f.skipped.map((reason) => h("li", {}, `Kept as it was: ${reason}`))) : null,
+        f.changed ? humanizerDiff(f.diff) : null);
+    }));
+    applyButton.hidden = !changed.some((f) => !f.applied);
+    status.textContent = changed.length ? `${changed.length} of ${job.files.length} files rewritten. Review the changes, untick what you don't want, then apply. Nothing has been written yet.`
+      : "The AI didn't change anything.";
+  };
+  const finish = () => { clearInterval(poll); poll = 0; runButton.disabled = !files.length; cancelButton.hidden = true; project.disabled = findButton.disabled = false; };
+  runButton.addEventListener("click", async () => {
+    const chosen = selected();
+    if (!chosen.length) { status.textContent = "Tick at least one file."; return; }
+    runButton.disabled = project.disabled = findButton.disabled = true; cancelButton.hidden = false; applyButton.hidden = true; fill(results);
+    status.textContent = "Sending the text and comments (never the code) to the AI…";
+    try {
+      jobId = (await api("/api/projects/humanize", { method: "POST", body: { id: project.value, files: chosen, rules: humanizerRules(options) } })).job;
+    } catch (err) { status.textContent = err.message; finish(); return; }
+    poll = setInterval(async () => {
+      try {
+        const job = await api("/api/projects/humanize/job?id=" + encodeURIComponent(jobId));
+        if (job.status === "running") { status.textContent = job.total ? `Rewriting… part ${Math.min(job.done + 1, job.total)} of ${job.total}. This can take a few minutes.` : "Reading the files…"; return; }
+        finish();
+        if (job.status === "done") showResults(job);
+        else status.textContent = job.status === "cancelled" ? "Cancelled. Nothing was changed." : job.error;
+      } catch (err) { finish(); status.textContent = err.message; }
+    }, 2000);
+  });
+  cancelButton.addEventListener("click", () => { api("/api/projects/humanize/cancel", { method: "POST", body: { job: jobId } }).catch(() => {}); });
+  applyButton.addEventListener("click", async () => {
+    const chosen = Array.from(results.querySelectorAll("input[data-path]")).filter((box) => box.checked && !box.disabled).map((box) => box.dataset.path);
+    if (!chosen.length) { status.textContent = "Tick at least one changed file to apply."; return; }
+    applyButton.disabled = true;
+    try {
+      const result = await api("/api/projects/humanize/apply", { method: "POST", body: { job: jobId, files: chosen } });
+      const job = await api("/api/projects/humanize/job?id=" + encodeURIComponent(jobId));
+      showResults(job);
+      status.textContent = `Saved ${result.written.length} file${result.written.length === 1 ? "" : "s"} in ${projectName()}.` +
+        (result.conflicts.length ? ` Skipped ${result.conflicts.join(", ")}: changed since the rewrite, so run it again.` : "") +
+        " Check with git diff and commit when you're happy; git checkout -- <file> undoes a file.";
+    } catch (err) { status.textContent = err.message; }
+    finally { applyButton.disabled = false; }
+  });
+
+  const el = card("Project humanizer", "Makes the README, text files and code comments of one of your projects read naturally, using the AI you chose in the assistant's settings. Only that text is sent, never the code, and a rewrite that would touch code is refused. You see every change before anything is saved.",
+    toolField("Project", project), findButton, fileList,
+    humanizerChoice(options, "language", "Language", () => {}), humanizerChoice(options, "tone", "Tone", () => {}),
+    humanizerChoice(options, "level", "Vocabulary", () => {}), toolField("Extra instructions (optional)", notes),
+    h("div", { class: "tool-actions" }, runButton, cancelButton), status, results, applyButton);
+  el.setAttribute("class", "tool-card tool-card-wide");
+  return el;
+}
+
 function additionalToolGroups(card, capabilities) {
   const [pdfCompressor, pdfEditor, imagePdf] = pdfToolCards(card, capabilities);
   return {
     Documents: [pdfCompressor, pdfEditor],
     Images: [imagePdf],
     Archives: [archiveToolCard(card)],
-    Text: [humanizerToolCard(card)],
+    Text: [humanizerToolCard(card), projectHumanizerCard(card)],
     Study: [studyTimerCard(card), gradeToolCard(card)],
     Converters: [unitToolCard(card)],
   };

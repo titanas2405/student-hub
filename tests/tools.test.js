@@ -46,7 +46,7 @@ test('tools have six accessible categories; switching preserves inputs and resto
   assert.equal(ui.all().filter(n=>n.attrs.role==='tab').length,6);
   assert.equal(ui.elements['tools-panel-images'].hidden,false);
   assert.equal(ui.elements['tools-panel-documents'].hidden,true);
-  assert.equal(ui.all().filter(n=>n.tag==='h2').length,13);
+  assert.equal(ui.all().filter(n=>n.tag==='h2').length,14);
   const text=ui.find(n=>n.attrs['aria-label']==='Text to count');text.value='My notes';
   ui.elements['tools-tab-text'].events.click();
   assert.equal(ui.elements['tools-tab-text'].attrs['aria-selected'],'true');
