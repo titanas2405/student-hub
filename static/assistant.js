@@ -192,6 +192,7 @@ async function sendStudentAssistant(question) {
     const data = await api("/api/assistant", { method: "POST", body: { question, access } });
     if (request !== studentAssistant.request) return;
     $("assistant-question").value = "";
+    $("assistant-question").rows = 3;
     studentAssistant.data = data;
     renderStudentAssistant();
     pollStudentAssistant();
@@ -201,6 +202,18 @@ async function sendStudentAssistant(question) {
       $("assistant-send").disabled = false;
     }
   }
+}
+
+// Puts a prompt (e.g. from the Prompt builder) in the question box; project prompts open in Projects for access.
+function loadAssistantPrompt(text, { projects = false, send = false } = {}) {
+  if (projects && state.view.type !== "projects") navigate({ type: "projects" });
+  toggleStudentAssistant(true);
+  $("assistant-question").value = text;
+  $("assistant-question").rows = Math.min(14, Math.max(3, text.split("\n").length));
+  $("assistant-question").focus();
+  $("assistant-question").setSelectionRange(0, 0);
+  $("assistant-question").scrollTop = 0;
+  if (send) sendStudentAssistant(text);
 }
 
 function initStudentAssistant() {

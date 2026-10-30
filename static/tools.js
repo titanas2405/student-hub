@@ -522,13 +522,240 @@ function projectHumanizerCard(card) {
   return el;
 }
 
+// ---------- Prompt builder ----------
+// Each template: the AI's role, its own fields, the steps it should follow and the shape of the answer.
+// projects: the prompt works on a project's files, so it opens the assistant in Projects (project access).
+const PROMPT_TEMPLATES = {
+  custom: { name: "Custom prompt", hint: "Start from a blank prompt and describe everything yourself.",
+    role: "a knowledgeable, careful assistant", fields: [], steps: [], output: "" },
+  code: { name: "Coding task in a project", projects: true, hint: "Build or change a feature in one of your projects.",
+    goal: "Implement this in my project: {feature}",
+    role: "a senior software engineer working directly in my project folder",
+    fields: [["feature", "What should be built or changed", "e.g. add a function that parses the CSV input and validates each row", true],
+      ["stack", "Language / framework", "e.g. Python 3.12, no extra libraries"],
+      ["files", "Files involved (if you know)", "e.g. src/parser.py, tests/test_parser.py"],
+      ["verify", "How to check it works", "e.g. python3 -m pytest; the output must match example.txt"]],
+    steps: ["List the project files and read the ones that matter before changing anything.",
+      "Explain your plan in 2-4 short points.", "Make the changes with small, focused edits that match the existing code style.",
+      "Add or update tests where it makes sense.", "Run the check I gave you (if you are allowed to run commands) and fix any failures."],
+    output: "A short summary of what you changed and why, the list of files touched, and the test/command results." },
+  bug: { name: "Fix a bug", projects: true, hint: "Find and fix an error in a project.",
+    goal: "Find and fix this bug in my project: {problem}",
+    role: "an experienced debugger working directly in my project folder",
+    fields: [["problem", "What goes wrong", "e.g. the program crashes when the input file is empty", true],
+      ["error", "Error message / output", "Paste the exact error or traceback", true],
+      ["steps", "Steps to reproduce", "e.g. python3 main.py data/empty.txt", true],
+      ["expected", "Expected behavior", "e.g. print 'No data' and exit with code 0"]],
+    steps: ["Read the code involved and find the root cause, not just the symptom.", "Explain the cause in one or two sentences.",
+      "Fix it with the smallest correct change.", "Reproduce the original steps (if you can run commands) to confirm the fix, and check nothing else broke."],
+    output: "The root cause, the fix (files and what changed), and how you verified it." },
+  review: { name: "Code review", projects: true, hint: "Get feedback on code before you submit it.",
+    goal: "Review {files} against my assignment requirements.",
+    role: "a strict but helpful teaching assistant reviewing a student's assignment",
+    fields: [["files", "Files or parts to review", "e.g. everything in src/, or the sorting functions", true],
+      ["requirements", "Assignment requirements", "Paste the requirements or grading criteria", true],
+      ["focus", "Focus on", "e.g. correctness, edge cases, memory leaks, readability"]],
+    steps: ["Read the files.", "Check them against the requirements one by one.", "Look for bugs, unhandled edge cases and unclear code.",
+      "Do not change any files unless I ask you to."],
+    output: "A table of requirements with met / partly / not met, then a list of issues ordered by severity, each with file, line and a concrete fix." },
+  explain: { name: "Explain a concept", hint: "Understand a topic from a course.",
+    goal: "Explain {topic} to me.",
+    role: "a patient university tutor",
+    fields: [["topic", "Topic", "e.g. virtual memory and page replacement", true],
+      ["course", "Course", "e.g. Λειτουργικά Συστήματα"],
+      ["level", "What I already know", "e.g. I know what RAM is but not how paging works"],
+      ["stuck", "Where I get stuck", "e.g. why LRU is hard to implement exactly"]],
+    steps: ["Check my course material (eClass documents, lectures) for how this course presents the topic.",
+      "Start from what I already know and build up step by step.", "Use one small worked example.", "End with 3 short questions so I can test myself."],
+    output: "A clear explanation with headings, the worked example, and the self-test questions with answers hidden at the end." },
+  exam: { name: "Exam preparation", hint: "Plan and practise for an exam.",
+    goal: "Help me prepare for my {course} exam.",
+    role: "an exam coach who knows how university exams are set",
+    fields: [["course", "Course", "e.g. Αλγόριθμοι", true], ["date", "Exam date", "e.g. 2026-11-20"],
+      ["topics", "Topics / chapters", "e.g. graphs, dynamic programming, NP-completeness"],
+      ["format", "Exam format", "e.g. 3 hours, open book, 5 problems"]],
+    steps: ["Look for past exams and material for this course in DitLab and eClass, and check recent course announcements.",
+      "Identify the topics that come up most often.", "Make a day-by-day plan until the exam date.", "Give me 5 practice problems in the style of past exams, without solutions."],
+    output: "Sources found, frequent topics ranked, the study plan as a table, and the practice problems." },
+  assignment: { name: "Assignment plan", hint: "Break an assignment into steps before a deadline.",
+    goal: "Help me plan and finish {assignment}.",
+    role: "an organised study partner",
+    fields: [["assignment", "Assignment", "e.g. Εργασία 2 στα Δίκτυα", true], ["deadline", "Deadline", "e.g. Friday 23:59"],
+      ["requirements", "Requirements", "Paste the assignment text or the main points"], ["time", "Time I have", "e.g. 2 hours per day"]],
+    steps: ["Find the assignment and its deadline in eClass if it is there, and read its description and attached files.",
+      "Split the work into concrete tasks with time estimates.", "Point out the parts that are usually hardest or easy to miss."],
+    output: "A checklist of tasks with estimated time and a suggested date for each, ending before the deadline." },
+  email: { name: "Email to a professor", hint: "Draft a clear, polite email (you send it yourself).",
+    goal: "Draft an email to {to} to {purpose}.",
+    role: "someone who writes clear, polite academic emails",
+    fields: [["to", "To", "e.g. the professor of Βάσεις Δεδομένων", true], ["purpose", "Purpose", "e.g. ask for an extension on project 1", true],
+      ["points", "Key points", "e.g. I was sick on 3-5 Nov, I have a doctor's note, I need 3 more days"]],
+    steps: ["Write a short subject line.", "Keep it brief: greeting, reason, request, thanks.", "Do not invent facts I didn't give you."],
+    output: "Subject line and email body, ready to copy. Do not send anything." },
+  summary: { name: "Summarize material", hint: "Short summary of documents, lectures or announcements.",
+    goal: "Summarize {what}.",
+    role: "a precise note-taker",
+    fields: [["what", "What to summarize", "e.g. this week's announcements, or the lecture notes of chapter 4", true],
+      ["purpose", "What it's for", "e.g. quick revision before the lab"]],
+    steps: ["Find and read the material (eClass, lectures, mail) before summarizing.", "Keep every number, date and definition exact."],
+    output: "Bullet-point summary grouped by topic, with the sources cited." },
+  essay: { name: "Essay / report outline", hint: "Structure a written report.",
+    goal: "Help me plan a report on: {topic}",
+    role: "an academic writing advisor",
+    fields: [["topic", "Topic / question", "e.g. Compare TCP and QUIC for mobile networks", true],
+      ["length", "Required length", "e.g. 2,000 words"], ["sources", "Sources I must use", "e.g. the two papers from the course page"]],
+    steps: ["Suggest a clear thesis.", "Outline sections with the main point of each.", "Say where each required source fits."],
+    output: "Thesis, section outline with bullet points, and a short list of things to check before submitting." },
+};
+const PROMPT_STYLE = {
+  language: { same: "Same as my question", el: "Ελληνικά", en: "English" },
+  detail: { brief: "Brief", standard: "Standard", thorough: "Thorough" },
+};
+
+function buildPrompt(templateId, values = {}) {
+  const t = PROMPT_TEMPLATES[templateId] || PROMPT_TEMPLATES.custom;
+  const v = (key) => String(values[key] || "").trim();
+  const out = [`# Role\nYou are ${v("role") || t.role}.`];
+  const goal = t.goal && t.fields.some(([key]) => v(key))
+    ? t.goal.replace(/\{(\w+)\}/g, (_, key) => v(key).split("\n")[0] || `[${t.fields.find(([k]) => k === key)?.[1] || key}]`) : "";
+  out.push(`# Task\n${v("task") || goal || "[describe the task]"}`);
+  const details = t.fields.filter(([key]) => v(key)).map(([key, label]) => `- ${label}: ${v(key).replace(/\n/g, "\n  ")}`);
+  if (v("context")) details.push(`- Extra context: ${v("context").replace(/\n/g, "\n  ")}`);
+  if (details.length) out.push("# Details\n" + details.join("\n"));
+  const rules = v("constraints").split("\n").map((line) => line.trim()).filter(Boolean);
+  if (rules.length) out.push("# Requirements\n" + rules.map((r) => `- ${r.replace(/^[-*]\s*/, "")}`).join("\n"));
+  if (t.steps.length) out.push("# Steps\n" + t.steps.map((step, i) => `${i + 1}. ${step}`).join("\n"));
+  if (v("examples")) out.push(`# Example of what I want\n${v("examples")}`);
+  out.push(`# Output\n${v("output") || t.output || "A clear, well-structured answer."}`);
+  const style = [
+    values.language === "el" ? "Answer in Greek." : values.language === "en" ? "Answer in English." : "Answer in the language of this message.",
+    { brief: "Keep it short: only what is needed.", thorough: "Be thorough: cover edge cases and explain your reasoning.", standard: "Use a normal level of detail." }[values.detail || "standard"],
+  ];
+  if (values.useData !== false) style.push("Check my connected data (eClass, DitLab, mail, lectures, projects) where it helps, and cite what you used.");
+  if (values.clarify) style.push("If something important is missing, ask me up to 3 short questions first and wait; otherwise go ahead.");
+  out.push("# Style\n" + style.map((s) => `- ${s}`).join("\n"));
+  return out.join("\n\n");
+}
+
+const PROMPT_SAVED_KEY = "hub:prompt-builder";
+function savedPrompts() {
+  try { const list = JSON.parse(localStorage.getItem(PROMPT_SAVED_KEY) || "[]"); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+function storePrompts(list) {
+  try { localStorage.setItem(PROMPT_SAVED_KEY, JSON.stringify(list.slice(0, 50))); return true; } catch { return false; }
+}
+
+function promptBuilderCard(card) {
+  const MAX = 12000;
+  let values = { language: "same", detail: "standard", useData: true, clarify: false };
+  const template = h("select", { "aria-label": "Prompt template" }, Object.entries(PROMPT_TEMPLATES).map(([id, t]) => h("option", { value: id }, t.name)));
+  const hint = h("p", { class: "muted tool-hint" });
+  const fields = h("div", { class: "prompt-fields" });
+  const output = h("textarea", { rows: "14", readonly: true, class: "tool-prompt", "aria-label": "Built prompt" });
+  const count = h("small", { class: "muted" });
+  const status = toolStatus();
+  const savedSelect = h("select", { "aria-label": "Saved prompts" });
+  const loadButton = h("button", { type: "button", class: "btn primary" }, "Load into assistant");
+  const update = () => {
+    output.value = buildPrompt(template.value, values);
+    const n = output.value.length;
+    count.textContent = `${n.toLocaleString()} / ${MAX.toLocaleString()} characters` + (n > MAX ? " · too long for the assistant, shorten the details" : "");
+    loadButton.disabled = n > MAX;
+  };
+  const input = (key, label, placeholder, multiline) => {
+    const el = h(multiline ? "textarea" : "input", multiline ? { rows: "3", placeholder, "aria-label": label } : { type: "text", placeholder, "aria-label": label });
+    el.value = values[key] || "";
+    el.addEventListener("input", () => { values[key] = el.value; update(); });
+    return toolField(label, el);
+  };
+  const select = (key, label) => {
+    const el = h("select", { "aria-label": label }, Object.entries(PROMPT_STYLE[key]).map(([value, text]) => h("option", { value }, text)));
+    el.value = values[key];
+    el.addEventListener("change", () => { values[key] = el.value; update(); });
+    return toolField(label, el);
+  };
+  const check = (key, label) => {
+    const el = h("input", { type: "checkbox", checked: !!values[key], "aria-label": label });
+    el.addEventListener("change", () => { values[key] = el.checked; update(); });
+    return h("label", { class: "check" }, el, label);
+  };
+  const renderFields = () => {
+    const t = PROMPT_TEMPLATES[template.value];
+    hint.textContent = t.hint + (t.projects ? " Opens the assistant in Projects, where you switch on read/write/command access." : "");
+    fill(fields,
+      t.fields.length ? null : input("task", "Task", "Describe exactly what you want the AI to do", true),
+      t.fields.map(([key, label, placeholder, multiline]) => input(key, label, placeholder, multiline)),
+      input("context", "Extra context (optional)", "Anything else the AI should know", true),
+      input("constraints", "Requirements, one per line (optional)", "e.g. use only the standard library\nkeep functions under 30 lines", true),
+      input("examples", "Example of the result (optional)", "Paste a short example of the format or style you want", true),
+      input("output", "Answer format (optional)", t.output || "e.g. a table, numbered steps, code only"),
+      input("role", "AI role (optional)", t.role),
+      h("div", { class: "tool-grid" }, select("language", "Answer language"), select("detail", "Detail")),
+      check("useData", "Let it check my eClass, DitLab, mail, lectures and projects"),
+      check("clarify", "Ask me clarifying questions first if something is missing"));
+    update();
+  };
+  const renderSaved = () => {
+    const list = savedPrompts();
+    fill(savedSelect, list.length ? [h("option", { value: "" }, "Saved prompts…"), ...list.map((p, i) => h("option", { value: String(i) }, `${p.name} · ${PROMPT_TEMPLATES[p.template]?.name || "Custom"}`))]
+      : [h("option", { value: "" }, "No saved prompts yet")]);
+  };
+  template.addEventListener("change", () => {
+    const keep = { language: values.language, detail: values.detail, useData: values.useData, clarify: values.clarify, context: values.context, constraints: values.constraints };
+    values = keep;
+    renderFields();
+  });
+  savedSelect.addEventListener("change", () => {
+    const item = savedPrompts()[Number(savedSelect.value)];
+    if (!item) return;
+    template.value = PROMPT_TEMPLATES[item.template] ? item.template : "custom";
+    values = { ...item.values };
+    renderFields();
+    status.textContent = `Loaded "${item.name}".`;
+  });
+  const save = () => {
+    const name = (prompt("Name for this prompt:", PROMPT_TEMPLATES[template.value].name) || "").trim().slice(0, 60);
+    if (!name) return;
+    const list = savedPrompts().filter((p) => p.name !== name);
+    list.unshift({ name, template: template.value, values: { ...values } });
+    status.textContent = storePrompts(list) ? `Saved "${name}" in this browser.` : "This browser doesn't allow saving; copy the prompt instead.";
+    renderSaved();
+  };
+  const remove = () => {
+    const i = Number(savedSelect.value), list = savedPrompts();
+    if (savedSelect.value === "" || !list[i]) { status.textContent = "Choose a saved prompt to delete."; return; }
+    const [gone] = list.splice(i, 1);
+    storePrompts(list); renderSaved();
+    status.textContent = `Deleted "${gone.name}".`;
+  };
+  loadButton.addEventListener("click", () => {
+    const t = PROMPT_TEMPLATES[template.value];
+    loadAssistantPrompt(output.value, { projects: !!t.projects });
+    status.textContent = t.projects ? "Loaded into the assistant in Projects. Choose the project and switch on access, then press Αποστολή."
+      : "Loaded into the assistant. Check it and press Αποστολή.";
+  });
+  renderSaved();
+  renderFields();
+  const el = card("Prompt builder", "Build a detailed, structured prompt from a template (coding, bug fix, code review, exam prep, assignment plan, emails and more), then load it straight into the AI assistant or copy it. Save the ones you reuse.",
+    toolField("Template", template), hint, fields,
+    toolField("Prompt", output), count,
+    h("div", { class: "tool-actions" }, loadButton,
+      h("button", { type: "button", class: "btn", onclick: async () => { await copyText(output.value); status.textContent = "Prompt copied."; } }, "Copy"),
+      h("button", { type: "button", class: "btn", onclick: save }, "Save…")),
+    h("div", { class: "tool-actions" }, savedSelect, h("button", { type: "button", class: "btn", onclick: remove }, "Delete saved")),
+    status);
+  el.setAttribute("class", "tool-card tool-card-wide");
+  return el;
+}
+
 function additionalToolGroups(card, capabilities) {
   const [pdfCompressor, pdfEditor, imagePdf] = pdfToolCards(card, capabilities);
   return {
+    AI: [promptBuilderCard(card), humanizerToolCard(card), projectHumanizerCard(card)],
     Documents: [pdfCompressor, pdfEditor],
     Images: [imagePdf],
     Archives: [archiveToolCard(card)],
-    Text: [humanizerToolCard(card), projectHumanizerCard(card)],
+    Text: [],
     Study: [studyTimerCard(card), gradeToolCard(card)],
     Converters: [unitToolCard(card)],
   };

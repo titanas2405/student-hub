@@ -6144,8 +6144,8 @@ class Handler(BaseHTTPRequestHandler):
         self._require_csrf(s)
         body = self._read_json()
         question = body.get("question")
-        if not isinstance(question, str) or not question.strip() or len(question) > 6000:
-            raise ApiError(400, "Write a question (up to 6,000 characters)")
+        if not isinstance(question, str) or not question.strip() or len(question) > 12000:
+            raise ApiError(400, "Write a question (up to 12,000 characters)")
         assistant = self._student_assistant(s)
         access, name, extra = self._assistant_access(body.get("access"))
         assistant.ask(question.strip(), access, name, extra)

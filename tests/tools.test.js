@@ -41,12 +41,12 @@ function frontend(savedCategory = '') {
   return {ctx,elements,intervals,find,all,storage,setNow:value=>{now=value;},textButton:text=>find(n=>n.tag==='button'&&n.children.includes(text))};
 }
 
-test('tools have six accessible categories; switching preserves inputs and restores selection',async()=>{
+test('tools have seven accessible categories; switching preserves inputs and restores selection',async()=>{
   const ui=frontend('Images');ui.ctx.renderTools();await Promise.resolve();
-  assert.equal(ui.all().filter(n=>n.attrs.role==='tab').length,6);
+  assert.equal(ui.all().filter(n=>n.attrs.role==='tab').length,7);
   assert.equal(ui.elements['tools-panel-images'].hidden,false);
   assert.equal(ui.elements['tools-panel-documents'].hidden,true);
-  assert.equal(ui.all().filter(n=>n.tag==='h2').length,14);
+  assert.equal(ui.all().filter(n=>n.tag==='h2').length,15);
   const text=ui.find(n=>n.attrs['aria-label']==='Text to count');text.value='My notes';
   ui.elements['tools-tab-text'].events.click();
   assert.equal(ui.elements['tools-tab-text'].attrs['aria-selected'],'true');
@@ -103,11 +103,32 @@ test('humanizer prompt includes the text and chosen style, and updates as option
   assert.match(prompt,/"""\nRecursion is useful\.\n"""$/);
   assert.doesNotMatch(ctx.humanizerPrompt({text:'x',keepTerms:false}),/Keep technical terms/);
   assert.match(ctx.humanizerPrompt(),/\[paste your text here\]/);
-  const ui=frontend('Text');ui.ctx.renderTools();
+  const ui=frontend('AI');ui.ctx.renderTools();
   const input=ui.find(n=>n.attrs['aria-label']==='Text to humanize');
   const output=ui.find(n=>n.attrs['aria-label']==='Generated humanizer prompt');
   input.value='My essay';input.events.input();
   assert.match(output.value,/"""\nMy essay\n"""/);
   const tone=ui.find(n=>n.attrs['aria-label']==='Tone');tone.value='casual';tone.events.change();
   assert.match(output.value,/conversational tone/);
+});
+
+test('prompt builder fills the template, keeps details and shows the length',()=>{
+  const {ctx}=frontend();
+  const p=ctx.buildPrompt('bug',{problem:'Crashes on empty input',error:'IndexError: list index out of range',steps:'python3 main.py empty.txt',
+    constraints:'- no new libraries\nkeep the CLI the same',language:'el',detail:'thorough',clarify:true});
+  assert.match(p,/^# Role\nYou are an experienced debugger/);
+  assert.match(p,/# Task\nFind and fix this bug in my project: Crashes on empty input/);
+  assert.match(p,/- Error message \/ output: IndexError/);
+  assert.match(p,/- What goes wrong: Crashes on empty input/);
+  assert.match(p,/# Requirements\n- no new libraries\n- keep the CLI the same/);
+  assert.match(p,/# Steps\n1\. Read the code involved/);
+  assert.match(p,/Answer in Greek\./);assert.match(p,/ask me up to 3 short questions/);
+  assert.match(ctx.buildPrompt('custom',{task:'Write a haiku',useData:false}),/# Task\nWrite a haiku/);
+  assert.doesNotMatch(ctx.buildPrompt('custom',{task:'x',useData:false}),/connected data/);
+  const ui=frontend('AI');ui.ctx.renderTools();
+  const template=ui.find(n=>n.attrs['aria-label']==='Prompt template');
+  template.value='exam';template.events.change();
+  const course=ui.find(n=>n.attrs['aria-label']==='Course');course.value='Αλγόριθμοι';course.events.input();
+  const out=ui.find(n=>n.attrs['aria-label']==='Built prompt');
+  assert.match(out.value,/# Task\nHelp me prepare for my Αλγόριθμοι exam\./);assert.match(out.value,/past exams/);
 });
