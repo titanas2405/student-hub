@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Student Hub</title>
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://uniflix.uoa.gr">
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -68,43 +70,61 @@
   <div id="app" class="app" hidden>
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar" aria-label="Categories">
+      <div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0"
+           aria-label="Πλάτος μενού" title="Σύρε για αλλαγή πλάτους · διπλό κλικ για επαναφορά"></div>
       <div class="sidebar-top">
         <button class="btn primary compose-btn" id="compose-btn" title="New message (C)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
           New Message
         </button>
+        <ul id="nav-top" class="nav nav-top"></ul>
       </div>
-      <nav>
-        <h2 id="mail-head">Mail</h2>
-        <ul id="nav-mail" class="nav"></ul>
-        <h2 class="row">Announcements
-          <button class="icon-btn" id="add-feed-btn" title="Add announcement source" aria-label="Add announcement source">
-            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-          </button>
-        </h2>
-        <ul id="nav-feeds" class="nav"></ul>
-        <h2 id="topics-head" hidden>Topics</h2>
-        <ul id="nav-topics" class="nav"></ul>
-        <div id="eclass-section" hidden>
-          <h2 class="row">eClass · My Courses
+      <nav id="nav-sections">
+        <section class="nav-section" data-section="mail">
+          <h2 id="mail-head" class="nav-head">Mail</h2>
+          <ul id="nav-mail" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="announcements">
+          <h2 class="nav-head row">Announcements
+            <button class="icon-btn" id="add-feed-btn" title="Add announcement source" aria-label="Add announcement source">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </h2>
+          <ul id="nav-feeds" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="topics">
+          <h2 id="topics-head" class="nav-head" hidden>Topics</h2>
+          <ul id="nav-topics" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="eclass" id="eclass-section" hidden>
+          <h2 class="nav-head row">eClass · My Courses
             <button class="icon-btn" id="eclass-refresh" title="Reload courses" aria-label="Reload eClass courses">
               <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
           </h2>
           <ul id="nav-eclass" class="nav"></ul>
-        </div>
-        <h2 id="studies-head" hidden>Σπουδές</h2>
-        <ul id="nav-studies" class="nav"></ul>
-        <h2 id="ditlab-head">DitLab · Exams</h2>
-        <ul id="nav-ditlab" class="nav"></ul>
-        <h2>Sources</h2>
-        <ul id="nav-sources" class="nav"></ul>
-        <h2 id="links-head">Links</h2>
-        <ul id="nav-links" class="nav links"></ul>
+        </section>
+        <section class="nav-section" data-section="studies">
+          <h2 id="studies-head" class="nav-head" hidden>Σπουδές</h2>
+          <ul id="nav-studies" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="ditlab">
+          <h2 id="ditlab-head" class="nav-head">DitLab · Exams</h2>
+          <ul id="nav-ditlab" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="sources">
+          <h2 class="nav-head">Sources</h2>
+          <ul id="nav-sources" class="nav"></ul>
+        </section>
+        <section class="nav-section" data-section="links">
+          <h2 id="links-head" class="nav-head">Links</h2>
+          <ul id="nav-links" class="nav links"></ul>
+        </section>
       </nav>
       <div class="sidebar-foot">
         <div class="avatar" id="me-avatar" aria-hidden="true"></div>
         <div class="me"><strong id="me-name"></strong><span id="me-email" class="muted"></span></div>
+        <button class="icon-btn theme-btn" id="theme-btn" type="button"></button>
         <button class="icon-btn" id="logout-btn" title="Sign out" aria-label="Sign out">
           <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
         </button>
@@ -148,10 +168,31 @@
         <div id="ann-head"></div>
         <div id="ann-errors"></div>
         <div id="ann-list" class="ann-list"></div>
+        <div id="course-body" class="ann-list" hidden></div>
       </section>
 
       <section id="studies-view" class="ann" hidden>
         <div id="studies-body" class="ann-list"></div>
+      </section>
+
+      <section id="projects-view" class="ann" hidden>
+        <div id="projects-body" class="ann-list projects"></div>
+      </section>
+
+      <section id="briefing-view" class="ann" hidden>
+        <div id="briefing-body" class="ann-list briefing"></div>
+      </section>
+
+      <section id="deadlines-view" class="ann" hidden>
+        <div id="deadlines-body" class="ann-list"></div>
+      </section>
+
+      <section id="timetable-view" class="ann" hidden>
+        <div id="timetable-body" class="ann-list lectures"></div>
+      </section>
+
+      <section id="lectures-view" class="ann" hidden>
+        <div id="lectures-body" class="ann-list lectures"></div>
       </section>
 
       <section id="grades-view" class="ann" hidden>
@@ -193,6 +234,88 @@
         <button type="submit" class="btn primary" id="feed-add">Add</button>
       </div>
     </form>
+  </div>
+
+  <!-- Timetable entry editor -->
+  <div id="tt-dialog" class="overlay" hidden>
+    <form id="tt-form" class="sheet small-sheet tt-sheet" novalidate></form>
+  </div>
+
+  <!-- New / join / invite dialog for GitHub projects -->
+  <div id="proj-dialog" class="overlay" hidden>
+    <form id="proj-form" class="sheet small-sheet proj-sheet" novalidate></form>
+  </div>
+
+  <!-- Lecture player -->
+  <div id="player" class="overlay" hidden>
+    <div class="sheet player-sheet" role="dialog" aria-modal="true" aria-labelledby="player-title">
+      <header class="player-head">
+        <div class="title-block">
+          <h2 id="player-title"></h2>
+          <span class="muted" id="player-sub"></span>
+        </div>
+        <button class="icon-btn" id="player-close" title="Close (Esc)" aria-label="Close player">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </header>
+      <div class="player-body">
+      <div class="player-main">
+      <div class="player-stage">
+        <video id="player-video" controls playsinline preload="metadata"></video>
+        <div class="player-spinner" id="player-spinner" hidden><div class="spinner"></div></div>
+        <button type="button" class="player-start" id="player-start" aria-label="Αναπαραγωγή" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <p id="player-error" class="player-error" role="alert" hidden></p>
+      </div>
+      <div class="player-subs" id="player-subs" role="status" hidden></div>
+      </div>
+      <aside class="player-side" id="player-side" aria-label="Ρυθμίσεις αναπαραγωγής και AI καθηγητής"></aside>
+      </div>
+      <footer class="player-foot">
+        <button class="btn plain" id="player-prev">‹ Προηγούμενη</button>
+        <button type="button" class="fx-toggle" id="player-fx" aria-pressed="true" aria-controls="player-side" title="Ταχύτητα, ένταση, αντίθεση">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+          Ρυθμίσεις
+        </button>
+        <button type="button" class="fx-toggle ai-toggle" id="player-ai" aria-pressed="false" aria-controls="player-side" title="Σύνοψη της διάλεξης με χρονοσημάνσεις, από το Claude">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
+          AI καθηγητής
+        </button>
+        <button type="button" class="cc" id="player-cc" aria-pressed="false" disabled>CC</button>
+        <a class="btn plain" id="player-open" target="_blank" rel="noopener noreferrer">uniflix ↗</a>
+        <button class="btn plain" id="player-next">Επόμενη ›</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- File viewer: PDF, Word/PowerPoint/Excel (as PDF), Markdown, text/code, images -->
+  <div id="viewer" class="overlay" hidden>
+    <div class="sheet viewer-sheet" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
+      <header class="viewer-head">
+        <span class="file-badge" id="viewer-badge"></span>
+        <div class="title-block">
+          <h2 id="viewer-title"></h2>
+          <span class="muted" id="viewer-sub"></span>
+        </div>
+        <div class="viewer-tools" id="viewer-tools"></div>
+        <div class="viewer-nav" id="viewer-nav">
+          <button type="button" class="icon-btn" id="viewer-prev" title="Προηγούμενο αρχείο (←)" aria-label="Προηγούμενο αρχείο">‹</button>
+          <span id="viewer-pos"></span>
+          <button type="button" class="icon-btn" id="viewer-next" title="Επόμενο αρχείο (→)" aria-label="Επόμενο αρχείο">›</button>
+        </div>
+        <a class="icon-btn" id="viewer-download" title="Λήψη" aria-label="Λήψη">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        </a>
+        <a class="icon-btn" id="viewer-tab" target="_blank" rel="noopener" title="Άνοιγμα σε νέα καρτέλα" aria-label="Άνοιγμα σε νέα καρτέλα">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+        </a>
+        <button class="icon-btn" id="viewer-close" title="Κλείσιμο (Esc)" aria-label="Κλείσιμο">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </header>
+      <div class="viewer-body" id="viewer-body"></div>
+    </div>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
