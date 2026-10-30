@@ -53,14 +53,13 @@ jobs:
           if (-not (Test-Path ([Environment]::GetFolderPath('Desktop') + '\Student Hub.lnk'))) { 'desktop shortcut missing'; exit 1 }
           if (Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue) {
             if (-not (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe")) { 'LibreOffice missing although winget exists'; exit 1 }
-            if (-not (Get-ChildItem "$env:ProgramFiles\gs" -Recurse -Filter gswin64c.exe -ErrorAction SilentlyContinue)) { 'Ghostscript missing although winget exists'; exit 1 }
           } else { 'winget is not on this runner: the winget installs were not exercised' }
-          # A new process: the app must find Poppler and Ghostscript even without the updated PATH.
+          # A new process: the app must find Poppler even without the updated PATH.
           $out = py -3 server.py --check | Out-String
           $code = $LASTEXITCODE
           $out
           if ($code) { exit 1 }
-          if ($out -notmatch '\[OK\] Poppler' -or $out -notmatch '\[OK\] Ghostscript') { 'Poppler or Ghostscript not found by the app'; exit 1 }
+          if ($out -notmatch '\[OK\] Poppler') { 'Poppler not found by the app'; exit 1 }
       - name: Batch files have Windows line endings
         shell: pwsh
         run: |

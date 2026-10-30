@@ -109,7 +109,7 @@ if ((Have gswin64c) -or (Test-Path "$env:ProgramFiles\gs")) { Info 'Ghostscript 
 elseif (Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue) {
     $gsId = Find-WingetId 'ghostscript'
     if ($gsId) { Install-WithWinget $gsId 'Ghostscript' | Out-Null }
-    else { Warn 'Ghostscript was not found in winget: get it from https://ghostscript.com/releases/' }
+    else { Warn 'Ghostscript (only for PDF compression) is not in winget: download the 64-bit Windows installer from https://ghostscript.com/releases/gsdnld.html' }
 }
 if (Have pdfinfo) { Info 'Poppler is already installed.' }
 elseif (Install-WithWinget 'oschwartz10612.Poppler' 'Poppler') {
