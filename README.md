@@ -2,10 +2,39 @@
 
 Your university email, eClass and department announcements in one place, for ΕΚΠΑ (DIT) and Πανεπιστήμιο Πειραιώς (Ναυτιλιακές Σπουδές).
 
+## Install
+
+Run the installer once from the Student Hub folder, **before you sign in**. It installs what the app uses, asks
+before each optional part (Projects, Word/PDF tools, an AI CLI, Whisper), lets you sign in to the AI CLI and GitHub,
+adds a *Student Hub* shortcut and ends with the setup check.
+
+| | Install | Start |
+|---|---|---|
+| **Windows** | double-click `install-windows.bat` | the *Student Hub* desktop shortcut, or `start-windows.bat` |
+| **Linux** (apt, dnf, pacman, zypper) | `./install-linux.sh` (`--yes` = recommended parts, no questions) | *Student Hub* in the applications menu, or `./start-linux.sh` |
+| **macOS / anything else** | Python 3.9+, then the optional programs from the setup check | `python3 server.py` |
+
+Then open http://127.0.0.1:8765. The app itself needs only Python 3.9+ (standard library); everything else enables
+optional features. The sign-in page has a **setup check** that shows what is installed, what each missing part is
+for and the command to add it; `python3 server.py --check` prints the same in a terminal.
+
+### Docker (optional)
+
 ```
-python3 server.py
+docker compose up -d --build
+docker compose exec -it student-hub claude          # sign in to the AI CLI once
+docker compose exec -it student-hub gh auth login   # for Projects
 ```
-Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard library only).
+Then open http://127.0.0.1:8765. The image has Python, LibreOffice, Ghostscript, Poppler, git, gh and Claude Code,
+for **linux/amd64 and linux/arm64** (Intel/AMD PCs, Apple Silicon, ARM laptops, Raspberry Pi 4/5), so it behaves the
+same on Windows, macOS and Linux (with Docker Desktop on Windows/macOS). Settings and logins are kept in the
+`student-hub-home` volume; project folders are in `./projects` (or set `STUDENT_HUB_PROJECTS` to another folder).
+Build options are in `docker-compose.yml` (`WITH_WHISPER: "1"` for local subtitles, `AI_CLI: none`).
+
+What works differently in Docker: *Open in IDE* can't start an editor on your computer (open the project folder
+yourself), the assistant's project commands run in the container's Linux rather than on your system, Whisper can't
+use the GPU, and the app must stay on port 8765 on both sides (it checks the address it is opened at). The normal
+install above has none of these limits, so it is the recommended way.
 
 ### Windows
 

@@ -50,7 +50,8 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOST = "127.0.0.1"
+HOST = os.environ.get("STUDENT_HUB_LISTEN", "127.0.0.1")   # Docker listens on all of the container's addresses
+IN_DOCKER = os.environ.get("STUDENT_HUB_DOCKER") == "1"
 PORT = int(os.environ.get("STUDENT_HUB_PORT", "8765"))
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -6183,6 +6184,11 @@ class Handler(BaseHTTPRequestHandler):
                 s.assistant = student_assistant.Assistant(sys.modules[__name__], s)
             return s.assistant
 
+    def api_get_setup(self, q):
+        """The setup check for the sign-in page (no session needed: only this computer can reach the app)."""
+        rows, ai_any = setup_report(check_port=False, check_tls=(q.get("tls") or ["0"])[0] == "1")
+        self._json(200, {"rows": rows, "ai": ai_any, "windows": os.name == "nt", "docker": IN_DOCKER})
+
     def api_get_assistant(self, q):
         self._json(200, self._student_assistant(self._session()).status())
 
@@ -6749,16 +6755,15 @@ def tls_probe(host, port):
     return False, "not verified"
 
 
-def setup_check():
-    """`server.py --check`: what is installed, what each optional part enables and how to add what's missing."""
+def setup_report(check_port=True, check_tls=True):
+    """What is installed, what each optional part enables and how to add what's missing.
+    Rows: {name, ok, required, detail, fix, area}. Used by `server.py --check` and the sign-in page."""
     win = os.name == "nt"
-    py = "py -3" if win else "python3"
-    rows, problems = [], 0
+    rows = []
 
-    def row(ok, name, detail, fix="", required=False):
-        nonlocal problems
-        problems += required and not ok
-        rows.append(f"  [{'OK' if ok else ('!!' if required else '--')}] {name}: {detail}" + ("" if ok or not fix else f"\n         -> {fix}"))
+    def row(ok, name, detail, fix="", required=False, area="core"):
+        rows.append({"name": name, "ok": bool(ok), "required": required, "detail": detail,
+                     "fix": "" if ok else fix, "area": area})
 
     row(sys.version_info >= (3, 9), "Python", f"{sys.version.split()[0]} ({sys.executable})",
         "install Python 3.9+ from python.org" + (" and tick 'Add python.exe to PATH'" if win else ""), True)
@@ -6769,47 +6774,63 @@ def setup_check():
             probe = folder / ".write-test"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink()
-            row(True, f"{kind} folder", str(folder))
+            row(True, f"{kind} folder", str(folder), required=True)
         except OSError as e:
             row(False, f"{kind} folder", f"{folder} is not writable ({e})", "check the folder's permissions", True)
-    with socket.socket() as probe:
-        try:
-            probe.bind((HOST, PORT))
-            row(True, "port", f"{PORT} is free")
-        except OSError:
-            row(False, "port", f"{PORT} is in use (Student Hub already running?)", "close it, or set STUDENT_HUB_PORT=8766", True)
-    get = {"git": "winget install Git.Git" if win else "install git with your package manager",
-           "gh": "winget install GitHub.cli, then: gh auth login" if win else "install the GitHub CLI (cli.github.com), then: gh auth login"}
-    row(bool(GIT), "git", GIT or "not found (Projects)", get["git"])
-    row(bool(GH), "GitHub CLI", GH or "not found (Projects)", get["gh"])
-    row(bool(SOFFICE), "LibreOffice", SOFFICE or "not found (Word -> PDF, Office previews)",
-        "winget install TheDocumentFoundation.LibreOffice" if win else "install LibreOffice")
-    gs = student_tools.ghostscript()
-    row(bool(gs), "Ghostscript", gs or "not found (PDF compression)", "install it from ghostscript.com")
-    poppler = student_tools.find_program("pdfinfo")
-    row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)",
-        "download Poppler for Windows and add its Library\\bin folder to PATH" if win else "install poppler-utils")
-    npm = {"claude": "npm install -g @anthropic-ai/claude-code", "gemini": "npm install -g @google/gemini-cli",
-           "chatgpt": "npm install -g @openai/codex", "antigravity": "see 'Choosing an AI CLI' in the README"}
+    if check_port:
+        with socket.socket() as probe:
+            try:
+                probe.bind((HOST, PORT))
+                row(True, "port", f"{PORT} is free", required=True)
+            except OSError:
+                row(False, "port", f"{PORT} is in use (Student Hub already running?)", "close it, or set STUDENT_HUB_PORT=8766", True)
+    installer = "run install-windows.ps1" if win else "run ./install-linux.sh"
+    npm = {"claude": "irm https://claude.ai/install.ps1 | iex" if win else "curl -fsSL https://claude.ai/install.sh | bash",
+           "gemini": "npm install -g @google/gemini-cli", "chatgpt": "npm install -g @openai/codex",
+           "antigravity": "see 'Choosing an AI CLI' in the README"}
     ai_any = False
     for key, (label, _) in ai_cli.PROVIDERS.items():
         found = ai_available(key)
         ai_any |= found
-        row(found, label, ai_cli.binary(key) if found else "not found",
-            npm[key] + (" (needs Node.js: winget install OpenJS.NodeJS.LTS)" if win and key != "antigravity" else "") + ", then sign in once in a terminal")
+        row(found, label, ai_cli.binary(key) if found else "not found (assistant and AI tools)",
+            npm[key] + (" (needs Node.js: winget install OpenJS.NodeJS.LTS)" if win and key in ("gemini", "chatgpt") else "")
+            + ", then sign in once in a terminal", area="ai")
+    row(bool(GIT), "git", GIT or "not found (Projects)", "winget install Git.Git" if win else installer, area="projects")
+    row(bool(GH), "GitHub CLI", GH or "not found (Projects)",
+        ("winget install GitHub.cli" if win else installer) + ", then: gh auth login", area="projects")
+    row(bool(SOFFICE), "LibreOffice", SOFFICE or "not found (Word -> PDF, Office previews)",
+        "winget install TheDocumentFoundation.LibreOffice" if win else installer, area="documents")
+    gs = student_tools.ghostscript()
+    row(bool(gs), "Ghostscript", gs or "not found (PDF compression)",
+        "install it from ghostscript.com" if win else installer, area="documents")
+    poppler = student_tools.find_program("pdfinfo")
+    row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)",
+        "download Poppler for Windows and add its Library\\bin folder to PATH" if win else installer, area="documents")
     row(WHISPER_PY.exists(), "Whisper", str(WHISPER_PY) if WHISPER_PY.exists() else "not installed (local lecture subtitles; a Groq key also works)",
-        "see 'Subtitles' in the README")
-    row(TLS_KIND == "truststore" or not win, "Certificate checks",
-        "Windows' own (truststore)" if TLS_KIND == "truststore" else "Python's" + (" (reads the Windows store)" if win else ""),
-        "optional, avoids certificate errors with university servers: py -3 -m pip install truststore")
-    for host, port in tls_hosts():
-        ok, detail = tls_probe(host, port)
-        row(ok, f"TLS {host}:{port}", detail)
-    print("Student Hub setup check\n" + "\n".join(rows))
+        installer + " and choose Whisper", area="lectures")
+    if win:
+        row(TLS_KIND == "truststore", "Certificate checks",
+            "Windows' own (truststore)" if TLS_KIND == "truststore" else "Python's (reads the Windows store)",
+            "py -3 -m pip install --user truststore (avoids certificate errors with university servers)", area="network")
+    if check_tls:
+        for host, port in tls_hosts():
+            ok, detail = tls_probe(host, port)
+            row(ok, f"TLS {host}:{port}", detail, area="network")
+    return rows, ai_any
+
+
+def setup_check():
+    """`server.py --check`: the setup report as text; exit code 1 when a required part is missing."""
+    rows, ai_any = setup_report()
+    print("Student Hub setup check")
+    for r in rows:
+        mark = "OK" if r["ok"] else "!!" if r["required"] else "--"
+        print(f"  [{mark}] {r['name']}: {r['detail']}" + (f"\n         -> {r['fix']}" if r["fix"] else ""))
+    problems = sum(1 for r in rows if r["required"] and not r["ok"])
     print("\nRequired parts are fine." if not problems else f"\n{problems} required part(s) need fixing (marked !!).")
     if not ai_any:
         print("No AI CLI found: the assistant and AI tools need one of them.")
-    print(f"Start with:  {py} server.py   then open http://127.0.0.1:{PORT}")
+    print(f"Start with:  {'py -3' if os.name == 'nt' else 'python3'} server.py   then open http://127.0.0.1:{PORT}")
     return 1 if problems else 0
 
 

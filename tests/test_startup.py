@@ -1,4 +1,5 @@
 """Launch the actual local server to catch platform-specific startup failures."""
+import json
 import os
 from pathlib import Path
 import socket
@@ -35,7 +36,12 @@ class StartupTests(unittest.TestCase):
                         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as response:
                             self.assertEqual(response.status, 200)
                             self.assertIn("Student Hub", response.read().decode("utf-8"))
-                            break
+                        # The setup check is shown before sign-in, so it needs no session.
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/setup", timeout=30) as response:
+                            setup = json.loads(response.read().decode("utf-8"))
+                            self.assertTrue(any(r["name"] == "Python" and r["ok"] for r in setup["rows"]))
+                            self.assertFalse(any(r["name"] == "port" for r in setup["rows"]))   # the app itself holds it
+                        break
                     except (urllib.error.URLError, TimeoutError):
                         time.sleep(0.1)
                 else:

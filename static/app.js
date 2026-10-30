@@ -279,8 +279,34 @@ function showLogin(msg) {
   $("compose").hidden = true;
   $("login").hidden = false;
   $("login-error").textContent = msg || "";
+  loadSetup();
   $("password").value = "";
   ($("username").value ? $("password") : $("username")).focus();
+}
+
+// Setup check before sign-in: what is installed on this computer and how to add what's missing.
+const SETUP_AREAS = { core: "Βασικά", ai: "AI CLI", network: "Σύνδεση", projects: "Projects", documents: "Έγγραφα & PDF", lectures: "Διαλέξεις" };
+async function loadSetup(tls = false) {
+  $("setup-summary").textContent = tls ? "Έλεγχος σύνδεσης με τους servers…" : "Έλεγχος εγκατάστασης…";
+  let data;
+  try { data = await api("/api/setup" + (tls ? "?tls=1" : "")); }
+  catch (err) { $("setup-summary").textContent = "Έλεγχος εγκατάστασης: " + err.message; return; }
+  const broken = data.rows.filter((r) => r.required && !r.ok), failedTls = data.rows.filter((r) => r.area === "network" && !r.ok && r.name.startsWith("TLS"));
+  const missing = data.rows.filter((r) => !r.ok && !r.required).length;
+  $("setup-summary").textContent = broken.length ? `⚠ Η εγκατάσταση χρειάζεται διόρθωση (${broken.length})`
+    : failedTls.length ? "⚠ Πρόβλημα σύνδεσης με τους servers"
+    : !data.ai ? "⚠ Δεν βρέθηκε AI CLI · ο βοηθός AI δεν θα λειτουργεί"
+    : `✓ Η εγκατάσταση είναι εντάξει${missing ? ` · ${missing} προαιρετικά λείπουν` : ""}`;
+  $("setup-panel").classList.toggle("warn", !!(broken.length || failedTls.length || !data.ai));
+  if (broken.length || failedTls.length) $("setup-panel").open = true;
+  const groups = Object.keys(SETUP_AREAS).map((area) => [area, data.rows.filter((r) => r.area === area)]).filter(([, rows]) => rows.length);
+  fill($("setup-rows"), groups.map(([area, rows]) => h("li", { class: "setup-group" }, h("strong", {}, SETUP_AREAS[area]),
+    h("ul", {}, rows.map((r) => h("li", { class: r.ok ? "ok" : r.required ? "bad" : "missing" },
+      h("span", { class: "mark", "aria-hidden": "true" }, r.ok ? "✓" : r.required ? "✕" : "–"),
+      h("span", {}, h("b", {}, r.name), " ", h("small", { class: "muted" }, r.detail),
+        r.fix ? h("code", { title: "Αντιγραφή", onclick: () => copyText(r.fix).then(() => toast("Αντιγράφηκε")) }, r.fix) : null)))))));
+  $("setup-hint").textContent = data.docker ? "Τρέχει σε Docker: τα προγράμματα είναι μέσα στο container."
+    : `Για να εγκαταστήσεις ό,τι λείπει: ${data.windows ? "δεξί κλικ στο install-windows.ps1 → Run with PowerShell" : "./install-linux.sh"} στον φάκελο του Student Hub, μετά επανεκκίνηση.`;
 }
 
 async function onLogin(e) {
@@ -4714,6 +4740,8 @@ function init() {
     if (p && p !== $("provider").value) { $("provider").value = p; applyProvider(); }
   });
   $("login-form").addEventListener("submit", onLogin);
+  $("setup-tls").addEventListener("click", () => loadSetup(true));
+  $("setup-refresh").addEventListener("click", () => loadSetup());
   $("logout-btn").addEventListener("click", logout);
   $("ai-settings-btn").addEventListener("click", openGlobalAISettings);
   $("ai-settings-close").addEventListener("click", () => { $("ai-settings-dialog").hidden = true; $("ai-settings-btn").focus(); });

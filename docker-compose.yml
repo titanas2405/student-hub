@@ -1,0 +1,23 @@
+# docker compose up -d --build      then open http://127.0.0.1:8765
+# Sign in to the AI CLI and GitHub once:
+#   docker compose exec -it student-hub claude
+#   docker compose exec -it student-hub gh auth login
+services:
+  student-hub:
+    build:
+      context: .
+      args:
+        WITH_LIBREOFFICE: "1"     # Word -> PDF and Office previews (about 400 MB)
+        WITH_WHISPER: "0"         # "1": lecture subtitles on this computer (about 1 GB with the model)
+        AI_CLI: claude            # "claude" or "none"
+    image: student-hub
+    # Only this computer can open the app. Keep 8765 on both sides: the app checks the address it is opened at.
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - student-hub-home:/home/hub                       # settings, caches, AI CLI and GitHub logins
+      - ${STUDENT_HUB_PROJECTS:-./projects}:/home/hub/Projects   # your project folders
+    restart: unless-stopped
+
+volumes:
+  student-hub-home:

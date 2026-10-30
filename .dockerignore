@@ -1,0 +1,9 @@
+.git
+.github
+tests
+projects
+__pycache__
+*.pyc
+*.bat
+*.ps1
+*.sh
