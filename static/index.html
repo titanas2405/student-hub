@@ -8,9 +8,18 @@
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="preconnect" href="https://uniflix.uoa.gr">
+  <script src="/tools.js" defer></script>
+  <script src="/assistant.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <div id="ai-settings-dialog" class="overlay" hidden>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
+      <h2 id="ai-settings-title">Ρυθμίσεις AI · CLI</h2>
+      <div id="ai-settings-body"></div>
+      <button id="ai-settings-close" class="btn primary" type="button">Κλείσιμο</button>
+    </section>
+  </div>
   <!-- Sign-in sheet -->
   <div id="login" class="overlay" hidden>
     <form id="login-form" class="sheet login-sheet" autocomplete="on" novalidate>
@@ -73,6 +82,7 @@
       <div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0"
            aria-label="Πλάτος μενού" title="Σύρε για αλλαγή πλάτους · διπλό κλικ για επαναφορά"></div>
       <div class="sidebar-top">
+        <button class="icon-btn sidebar-close" id="sidebar-close" type="button" title="Hide menu" aria-label="Hide categories">×</button>
         <button class="btn primary compose-btn" id="compose-btn" title="New message (C)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
           New Message
@@ -84,16 +94,12 @@
           <h2 id="mail-head" class="nav-head">Mail</h2>
           <ul id="nav-mail" class="nav"></ul>
         </section>
-        <section class="nav-section" data-section="announcements">
-          <h2 class="nav-head row">Announcements
+        <section class="nav-section" data-section="topics">
+          <h2 id="topics-head" class="nav-head row">Topics
             <button class="icon-btn" id="add-feed-btn" title="Add announcement source" aria-label="Add announcement source">
               <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
           </h2>
-          <ul id="nav-feeds" class="nav"></ul>
-        </section>
-        <section class="nav-section" data-section="topics">
-          <h2 id="topics-head" class="nav-head" hidden>Topics</h2>
           <ul id="nav-topics" class="nav"></ul>
         </section>
         <section class="nav-section" data-section="eclass" id="eclass-section" hidden>
@@ -125,6 +131,7 @@
         <div class="avatar" id="me-avatar" aria-hidden="true"></div>
         <div class="me"><strong id="me-name"></strong><span id="me-email" class="muted"></span></div>
         <button class="icon-btn theme-btn" id="theme-btn" type="button"></button>
+        <button class="btn plain" id="ai-settings-btn" type="button" title="AI settings for the whole app">AI</button>
         <button class="icon-btn" id="logout-btn" title="Sign out" aria-label="Sign out">
           <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
         </button>
@@ -135,7 +142,7 @@
     <!-- Main -->
     <main class="main">
       <header class="toolbar">
-        <button class="icon-btn menu-btn" id="menu-btn" aria-label="Show categories">
+        <button class="icon-btn menu-btn" id="menu-btn" type="button" aria-label="Show categories" aria-controls="sidebar" aria-expanded="true">
           <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
         </button>
         <div class="title-block">
@@ -146,6 +153,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
           <input id="search" type="search" placeholder="Search" aria-label="Search">
         </label>
+        <button class="btn plain" id="assistant-toggle" type="button" aria-expanded="false" aria-controls="student-assistant">✦ Βοηθός AI</button>
         <button class="icon-btn" id="refresh-btn" title="Refresh" aria-label="Refresh">
           <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
         </button>
@@ -183,6 +191,10 @@
         <div id="study-body" class="ann-list study"></div>
       </section>
 
+      <section id="tools-view" class="ann" hidden>
+        <div id="tools-body" class="ann-list tools"></div>
+      </section>
+
       <section id="projects-view" class="ann" hidden>
         <div id="projects-body" class="ann-list projects"></div>
       </section>
@@ -211,6 +223,31 @@
         <div id="ditlab-body" class="ann-list"></div>
       </section>
     </main>
+    <aside id="student-assistant" class="student-assistant" aria-labelledby="assistant-title" hidden>
+      <header class="assistant-head">
+        <div><h2 id="assistant-title">Βοηθός AI</h2><small id="assistant-provider" class="muted">Επιλεγμένο AI CLI</small></div>
+        <button id="assistant-settings" class="btn plain" type="button">Ρυθμίσεις</button>
+        <button id="assistant-close" class="btn plain" type="button" aria-label="Κλείσιμο βοηθού">×</button>
+      </header>
+      <p class="assistant-intro">Ρώτησέ με για email, ανακοινώσεις, προθεσμίες και μαθήματα. Μπορώ να αναζητήσω και να διαβάσω έγγραφα σε όλους τους υποφακέλους του eClass και του συνδεδεμένου DitLab.</p>
+      <div class="assistant-prompts">
+        <button type="button" class="chip" data-assistant-prompt="Τι πρέπει να κάνω σήμερα; Έλεγξε προθεσμίες και πρόσφατες ανακοινώσεις.">Τι έχω να κάνω;</button>
+        <button type="button" class="chip" data-assistant-prompt="Δείξε μου τα μαθήματά μου και βοήθησέ με να βρω υλικό μελέτης στο eClass και στο DitLab.">Βρες υλικό μελέτης</button>
+      </div>
+      <div id="assistant-messages" class="assistant-messages" role="log" aria-label="Συνομιλία με τον βοηθό"></div>
+      <details id="assistant-activity-wrap" class="assistant-activity" hidden><summary>Πηγές που ελέγχω</summary><ol id="assistant-activity"></ol></details>
+      <div id="assistant-status" class="assistant-status" role="status"></div>
+      <form id="assistant-form" class="assistant-form">
+        <label for="assistant-question" class="muted">Η ερώτησή σου</label>
+        <textarea id="assistant-question" rows="3" maxlength="6000" placeholder="π.χ. Βρες θέματα εξετάσεων για τα Δίκτυα…"></textarea>
+        <div class="assistant-actions">
+          <button id="assistant-clear" type="button" class="btn plain">Νέα συνομιλία</button>
+          <button id="assistant-stop" type="button" class="btn plain" hidden>Διακοπή</button>
+          <button id="assistant-send" type="submit" class="btn primary">Αποστολή</button>
+        </div>
+      </form>
+      <small class="assistant-privacy">Οι πηγές που διαβάζω στέλνονται στο AI που επέλεξες μέσω CLI. Δεν αλλάζω τα δεδομένα σου. Η συνομιλία διαγράφεται με την αποσύνδεση. Shift+Enter: νέα γραμμή.</small>
+    </aside>
   </div>
 
   <!-- Compose sheet -->
@@ -308,7 +345,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
           Ρυθμίσεις
         </button>
-        <button type="button" class="fx-toggle ai-toggle" id="player-ai" aria-pressed="false" aria-controls="player-side" title="Σύνοψη της διάλεξης με χρονοσημάνσεις, από το Claude">
+        <button type="button" class="fx-toggle ai-toggle" id="player-ai" aria-pressed="false" aria-controls="player-side" title="Σύνοψη της διάλεξης με χρονοσημάνσεις, από το επιλεγμένο AI">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
           AI καθηγητής
         </button>

@@ -27,6 +27,9 @@ import time
 import traceback
 import unicodedata
 import uuid
+import student_tools
+import ai_cli
+import student_assistant
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -84,7 +87,7 @@ INSTITUTIONS = {
         "services": {"my-uni": "https://my-uni.uoa.gr/login/cas",
                      "eclass": "https://eclass.uoa.gr/modules/auth/cas.php"},
         "eclass": "https://eclass.uoa.gr/", "ditlab": True, "webmail": "https://webmail.uoa.gr/", "ditStudies": True,
-        "grades": {"name": "My-Uni", "start": "https://my-uni.uoa.gr/", "sso": "my-uni"},
+        "grades": {"name": "My-Uni", "start": "https://my-uni.uoa.gr/", "sso": "my-uni", "kind": "unitron"},
         "links": [
             {"label": "eClass", "sso": "eclass", "href": "https://eclass.uoa.gr/"},
             {"label": "My-Uni (Γραμματεία)", "sso": "my-uni", "href": "https://my-uni.uoa.gr/"},
@@ -538,8 +541,9 @@ class CasSession:
         self.lock = threading.Lock()
         self.posts = 0                  # password posts so far (for tests / diagnostics)
 
-    def open(self, url, data=None, accept="text/html,application/json", headers=None):
-        req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode() if data else None,
+    def open(self, url, data=None, accept="text/html,application/json", headers=None, method=None):
+        body = data if isinstance(data, bytes) else urllib.parse.urlencode(data).encode() if data else None
+        req = urllib.request.Request(url, data=body, method=method,
                                      headers={"User-Agent": "Mozilla/5.0 StudentHub", "Accept": accept, **(headers or {})})
         with self.opener.open(req, timeout=NET_TIMEOUT) as r:
             return r.geturl(), r.headers.get_content_type(), r.read(MAX_FEED).decode("utf-8", "replace")
@@ -722,18 +726,18 @@ class _FeedLinkFinder(HTMLParser):
         self._in_title = False
 
 
-def _local(tag):
+def _xml_local(tag):
     return tag.rsplit("}", 1)[-1].lower()
 
 
 def _child(el, *names):
     for c in el:
-        if _local(c.tag) in names:
+        if _xml_local(c.tag) in names:
             return c
     return None
 
 
-def _text(el):
+def _xml_text(el):
     return "".join(el.itertext()).strip() if el is not None else ""
 
 
@@ -761,16 +765,26 @@ CATEGORY_NAMES = {
 DRUPAL_DATE_RE = re.compile(r"^\w{3}, \d{1,2}/\d{1,2}/\d{4} - \d{1,2}:\d{2}$")
 
 
-def _category(entry, link):
+def _category(entry, link, title="", summary=""):
     """Use the feed's <category>, else the first URL path segment (/announcements/123 -> Announcements)."""
-    cat = _text(_child(entry, "category"))
+    cat = _xml_text(_child(entry, "category"))
     if not cat and link:
         seg = urllib.parse.urlsplit(link).path.strip("/").split("/")
         seg = seg[1] if seg[0] in ("en", "el") and len(seg) > 1 else seg[0]
         if seg.isalpha() and seg not in ("node", "content", "post"):
             cat = CATEGORY_NAMES.get(seg.lower()) or (seg.upper() if len(seg) <= 4
                                                       else seg.replace("-", " ").title())
-    return cat[:40]
+    aliases = {
+        "internship": "Πρακτική Άσκηση", "practical training": "Πρακτική Άσκηση",
+        "πρακτική": "Πρακτική Άσκηση", "πρακτική άσκηση": "Πρακτική Άσκηση",
+    }
+    normalized = unicodedata.normalize("NFD", f"{cat} {title} {summary} {link}").casefold()
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    # The DIT Drupal RSS commonly labels every post just "Ανακοινώσεις" and
+    # puts the actual subject in its title/link. Derive the useful topic there.
+    if re.search(r"praktik|πρακτικ\w*\s+ασκησ", normalized):
+        return "Πρακτική Άσκηση"
+    return aliases.get(cat.strip().casefold(), cat[:40])
 
 
 def _clean_summary(text, title, author):
@@ -792,47 +806,48 @@ def parse_feed(data, base_url):
         raise ApiError(422, "Not a valid RSS or Atom feed")
     title = ""
     items = []
-    kind = _local(root.tag)
+    kind = _xml_local(root.tag)
     if kind == "feed":                                          # Atom
-        title = _text(_child(root, "title"))
-        entries = [e for e in root if _local(e.tag) == "entry"]
+        title = _xml_text(_child(root, "title"))
+        entries = [e for e in root if _xml_local(e.tag) == "entry"]
     else:                                                       # RSS 2.0 / RSS 1.0 (RDF)
         channel = _child(root, "channel")
-        title = _text(_child(channel, "title")) if channel is not None else ""
+        title = _xml_text(_child(channel, "title")) if channel is not None else ""
         entries = [e for e in (channel if channel is not None and kind == "rss" else root)
-                   if _local(e.tag) == "item"]
+                   if _xml_local(e.tag) == "item"]
         if kind == "rdf":
-            entries = [e for e in root if _local(e.tag) == "item"]
+            entries = [e for e in root if _xml_local(e.tag) == "item"]
+    feed_title = title
     seen_titles = set()
-    for e in entries[:60]:
+    for e in entries:
         link_el = _child(e, "link")
         link = ""
         if link_el is not None:
-            link = link_el.get("href") or _text(link_el)
+            link = link_el.get("href") or _xml_text(link_el)
         if kind == "feed":
             for l in e:
-                if _local(l.tag) == "link" and l.get("rel", "alternate") == "alternate":
+                if _xml_local(l.tag) == "link" and l.get("rel", "alternate") == "alternate":
                     link = l.get("href", link)
                     break
         link = urllib.parse.urljoin(base_url, link) if link else ""
         if urllib.parse.urlsplit(link).scheme not in ("http", "https"):
             link = ""
-        title = html_to_text(_text(_child(e, "title"))) or "(untitled)"
+        title = html_to_text(_xml_text(_child(e, "title"))) or "(untitled)"
         if title.casefold() in seen_titles:          # e.g. DIT posts an event and its announcement
             continue
         seen_titles.add(title.casefold())
-        author = _text(_child(e, "author", "creator"))
-        summary = _text(_child(e, "description", "summary", "content", "encoded"))
+        author = _xml_text(_child(e, "author", "creator"))
+        summary = _xml_text(_child(e, "description", "summary", "content", "encoded"))
         summary = html_to_text(html.unescape(summary) if "&lt;" in summary else summary)
         items.append({
             "title": title,
             "link": link,
-            "date": _feed_date(_text(_child(e, "pubdate", "published", "updated", "date"))),
+            "date": _feed_date(_xml_text(_child(e, "pubdate", "published", "updated", "date"))),
             "summary": _clean_summary(summary, title, author)[:1200],
             "author": author,
-            "category": _category(e, link),
+            "category": _category(e, link, title, summary),
         })
-    return html_to_text(title), items
+    return html_to_text(feed_title), items
 
 
 WP_POSTS = "/wp-json/wp/v2/posts"
@@ -1060,6 +1075,74 @@ def dit_study_page(slug, force=False):
     return page
 
 
+_dit_topic_cache = {}
+_DIT_TOPIC_URLS = {
+    "undergraduate": ("https://www.di.uoa.gr/taxonomy/term/56", "Προπτυχιακά"),
+    "internship": ("https://www.di.uoa.gr/taxonomy/term/59", "Πρακτική Άσκηση"),
+}
+
+
+def dit_topic_announcements(topic, page=0, force=False):
+    """Read one DIT taxonomy page; archives can contain hundreds of entries."""
+    topic_info = _DIT_TOPIC_URLS.get(topic)
+    if not topic_info:
+        raise ApiError(404, "Unknown department announcement topic")
+    base, category = topic_info
+    try:
+        page = max(0, min(99, int(page)))
+    except (TypeError, ValueError):
+        raise ApiError(400, "Invalid announcement page")
+    cache_key = (topic, page)
+    hit = _dit_topic_cache.get(cache_key)
+    if hit and not force and time.time() - hit[0] < DIT_CACHE_TTL:
+        return hit[1]
+
+    data, final, _ = fetch_url(base + f"?page={page}")
+    page_html = data.decode("utf-8", "replace")
+    anchors = _Anchors()
+    anchors.feed(page_html)
+    anchors.close()
+    page_numbers = [int(m.group(1)) for href, _ in anchors.links
+                    if (m := re.search(r"(?:[?&])page=(\d+)", href))]
+    last_page = min(max(page_numbers, default=page), 99)
+    parser = _PageBlocks(final)
+    parser.feed(page_html)
+    parser.close()
+    items, seen = [], set()
+    for block in parser.blocks:
+        if block.get("t") != "table":
+            continue
+        for row in block.get("rows", []):
+            cells = row.get("cells", [])
+            links = [link for cell in cells for link in cell.get("links", [])]
+            link = next((x for x in links if "/taxonomy/term/" not in x.get("href", "")
+                         and "/user/" not in x.get("href", "")), None)
+            if not link or link["href"] in seen:
+                continue
+            title = " ".join(link.get("text", "").split())
+            if not title:
+                continue
+            seen.add(link["href"])
+            row_text = " ".join(c.get("text", "") for c in cells)
+            date_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", row_text)
+            date = ""
+            if date_match:
+                day, month, year = map(int, date_match.groups())
+                try:
+                    date = datetime(year, month, day, tzinfo=timezone.utc).isoformat()
+                except ValueError:
+                    pass
+            items.append({"title": title, "link": link["href"], "date": date,
+                          "summary": "", "author": "", "category": category,
+                          "source": "DIT ΕΚΠΑ", "sourceId": "dit", "topicArchive": True})
+    if not items:
+        raise ApiError(502, f"Could not read {category} announcement page {page + 1}")
+    result = {"items": items, "page": page, "totalPages": last_page + 1,
+              "hasMore": page < last_page}
+    _dit_topic_cache[cache_key] = (time.time(), result)
+    return result
+
+
 # --------------------------------------------------------------- DitLab ---
 
 DITLAB_API = "https://files.ditlab.gr/filebrowser/api"
@@ -1193,14 +1276,27 @@ GRADE_COLUMNS = [
 ]
 
 
-class _Tables(HTMLParser):
+class _GradeTables(HTMLParser):
     """Every <table> as rows of cell texts, plus every link (text, href)."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.tables, self.links, self._stack, self._cell, self._link = [], [], [], None, None
+        self.base, self._skip, self.meta = "", 0, {}
 
     def handle_starttag(self, tag, attrs):
+        if self._skip:
+            self._skip += tag not in ("br", "img", "input", "meta", "link", "hr", "base", "source", "wbr", "area", "embed", "param", "track", "col")
+            return
+        if tag in ("script", "style", "template"):
+            self._skip = 1
+            return
+        if tag == "meta":
+            a = dict(attrs)
+            if a.get("name"):
+                self.meta[a["name"]] = a.get("content") or ""
+        if tag == "base" and not self.base:
+            self.base = dict(attrs).get("href") or ""
         if tag == "table":
             self._stack.append([])
         elif tag == "tr" and self._stack:
@@ -1213,6 +1309,9 @@ class _Tables(HTMLParser):
             self._cell.append(" ")
 
     def handle_endtag(self, tag):
+        if self._skip:
+            self._skip -= 1
+            return
         if tag in ("td", "th") and self._cell is not None and self._stack and self._stack[-1]:
             self._stack[-1][-1].append(" ".join("".join(self._cell).split()))
             self._cell = None
@@ -1223,6 +1322,8 @@ class _Tables(HTMLParser):
             self._link = None
 
     def handle_data(self, data):
+        if self._skip:
+            return
         if self._cell is not None:
             self._cell.append(data)
         if self._link:
@@ -1247,7 +1348,7 @@ def _semester_value(text):
 
 def parse_grades_html(page):
     """Find grade tables (Greek or English headers) in a portal page; rows may be grouped by semester."""
-    p = _Tables()
+    p = _GradeTables()
     try:
         p.feed(page)
     except Exception:
@@ -1513,6 +1614,18 @@ def summarize_grades(courses):
     return {"courses": rows, "semesters": sorted({c["semester"] for c in rows if c["semester"]}), "stats": stats}
 
 
+def portal_ajax_headers(page):
+    parser = _GradeTables()
+    parser.feed(page)
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if parser.meta.get("_csrf"):
+        header = parser.meta.get("_csrf_header") or "X-CSRF-TOKEN"
+        if not re.fullmatch(r"[A-Za-z0-9-]+", header):
+            raise ApiError(502, "Invalid portal CSRF header")
+        headers[header] = parser.meta["_csrf"]
+    return headers
+
+
 class PortalClient:
     """Signs in to a student-records portal (My-Uni, sis-portal) through the university CAS and reads pages."""
 
@@ -1538,22 +1651,57 @@ class PortalClient:
             url, _, page = self.cas.through(self.start)
             if urllib.parse.urlsplit(url).hostname != self.host:
                 raise ApiError(502, f"Sign-in to {self.host} through {self.sso_host} failed")
+            if self.kind == "unitron" and "setActiveProfile" in page and "studentProfiles" in page:
+                url, page = self._activate_student_profile(url, page)
             self.landing = (url, page)
             return self.landing
+
+    def _activate_student_profile(self, url, page):
+        """Mirror Unitron's JS-only profile selection before reading its protected JSON APIs."""
+        if urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("p"):
+            return url, page
+        endpoint = urllib.parse.urljoin(self.start, "api/person/profiles")
+        headers = portal_ajax_headers(page)
+        try:
+            _, _, raw = self.cas.open(endpoint, accept="application/json", headers=headers)
+            profiles = json.loads(raw)
+        except (ValueError, OSError) as e:
+            raise ApiError(502, "Το MyUni/SIS δεν επέστρεψε τα προφίλ σου. Δοκίμασε ανανέωση της σύνδεσης.") from e
+        students = profiles.get("studentProfiles") if isinstance(profiles, dict) else None
+        students = [p for p in students if isinstance(p, dict) and p.get("id")] if isinstance(students, list) else []
+        if len(students) != 1:
+            raise ApiError(409, "Το MyUni/SIS δεν έχει μοναδικό φοιτητικό προφίλ. Χρειάζεται επιλογή προφίλ για την ανάγνωση βαθμών.")
+        profile_id = str(students[0]["id"])
+        try:
+            _, _, raw = self.cas.open(endpoint,
+                data=json.dumps({"id": profile_id, "type": "student"}).encode(),
+                method="PUT", accept="application/json",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"})
+            selected = json.loads(raw)
+            if not isinstance(selected, dict) or str(selected.get("id")) != profile_id:
+                raise ValueError("Profile selection was not confirmed")
+            target = urllib.parse.urljoin(self.start, "?" + urllib.parse.urlencode({"p": profile_id}))
+            final, _, selected_page = self.get(target)
+            if urllib.parse.urlsplit(final).hostname != self.host:
+                raise ValueError("Profile selection left the portal")
+            return final, selected_page
+        except (ValueError, OSError) as e:
+            raise ApiError(502, "Η ενεργοποίηση φοιτητικού προφίλ στο MyUni/SIS απέτυχε. Δοκίμασε ξανά.") from e
 
     def candidate_pages(self, explore=False):
         """The landing page plus same-site pages whose link text looks like grades
         (with explore=True, up to 25 navigation links, skipping anything that could change state)."""
         url, page = self.login()
         pages = [(url, "text/html", page)]
-        p = _Tables()
+        p = _GradeTables()
         try:
             p.feed(page)
         except Exception:
             pass
+        base = urllib.parse.urljoin(url, p.base)
         seen = {url}
         for text, href in p.links:
-            target = urllib.parse.urljoin(url, href)
+            target = urllib.parse.urljoin(base, href)
             wanted = GRADE_LINK_RE.search(text) or (explore and text)
             if (wanted and target not in seen and urllib.parse.urlsplit(target).hostname == self.host
                     and not UNSAFE_LINK_RE.search(text + " " + href)):
@@ -1570,8 +1718,7 @@ class PortalClient:
         """Call the portal's own JSON endpoints (the ones its grades pages use), signed in.
         Returns [(path, parsed JSON or None, raw text)]."""
         url, page = self.login()
-        m = re.search(r'name="_csrf"\s+content="([^"]+)"', page)
-        headers = {"X-Requested-With": "XMLHttpRequest", **({"X-CSRF-TOKEN": m.group(1)} if m else {})}
+        headers = portal_ajax_headers(page)
         out = []
         for path in self.api:
             try:
@@ -1591,19 +1738,26 @@ class PortalClient:
 
     def grades(self):
         """(courses, extra) — extra may carry the portal's official average."""
+        responses = self.api_json()
         if self.kind == "unitron":
-            data = {UNITRON_KEYS[path]: d for path, d, _ in self.api_json()}
-            courses = parse_unitron(data.get("diploma"), data.get("all"), data.get("scales"), data.get("program"))
+            data = {UNITRON_KEYS[path]: d for path, d, _ in responses}
+            diploma = data.get("diploma")
+            if not isinstance(diploma, list):
+                diploma = data.get("all")
+            courses = parse_unitron(diploma, data.get("all"), data.get("scales"), data.get("program"))
             if courses:
                 return courses, {"official": _num(data.get("avg"))}
-        for _, data, _ in self.api_json():
-            courses = parse_grades_json(data) if data is not None else []
-            if courses:
-                return courses, {}
+        else:
+            for _, data, _ in responses:
+                courses = parse_grades_json(data) if data is not None else []
+                if courses:
+                    return courses, {}
         courses = []
         for _, ctype, body in self.candidate_pages():
             if ctype == "text/html":
                 courses += parse_grades_html(body)
+        if not courses and self.kind == "unitron" and responses and all(data is None for _, data, _ in responses):
+            raise ApiError(502, "Το MyUni/SIS επέστρεψε σελίδα σύνδεσης ή σφάλμα αντί για βαθμούς JSON. Πάτησε Ανανέωση για νέα σύνδεση.")
         return courses, {}
 
     def capture(self):
@@ -1786,10 +1940,10 @@ class EclassClient:
             self.tool_cache[code] = tabs
         return tabs
 
-    def all_documents(self, code, max_folders=80):
+    def all_documents(self, code, max_folders=None):
         """Every file of a course's Documents, in all its folders (each with the folder path it's in)."""
         files, seen, level = [], {""}, [("", "")]
-        while level and len(seen) <= max_folders:
+        while level and (max_folders is None or len(seen) <= max_folders):
             def read(entry):
                 directory, label = entry
                 try:
@@ -1801,7 +1955,7 @@ class EclassClient:
                 for (directory, label), items in pool.map(read, level):
                     for x in items:
                         if x.get("dir"):
-                            if x["dir"] not in seen and len(seen) < max_folders:
+                            if x["dir"] not in seen and (max_folders is None or len(seen) < max_folders):
                                 seen.add(x["dir"])
                                 nxt.append((x["dir"], f"{label} / {x['name']}" if label else x["name"]))
                         elif x.get("url") or x.get("download"):
@@ -2531,9 +2685,30 @@ AI_EFFORTS = ("", "low", "medium", "high", "xhigh", "max")     # how long Claude
 
 def ai_settings():
     cfg = load_config()
-    model = cfg.get("ai_model") if cfg.get("ai_model") in AI_MODELS else ""
-    effort = cfg.get("ai_effort") if cfg.get("ai_effort") in AI_EFFORTS else ""
-    return {"model": model, "effort": effort}
+    provider = cfg.get("ai_provider", "claude")
+    if provider not in ai_cli.PROVIDERS:
+        provider = "claude"
+    profiles = dict(cfg.get("ai_profiles") or {})
+    profiles.setdefault("claude", {"model": cfg.get("ai_model", ""), "effort": cfg.get("ai_effort", "")})
+    profile = profiles.get(provider) or ({"model": cfg.get("ai_model", ""), "effort": cfg.get("ai_effort", "")} if provider == "claude" else {})
+    return {"provider": provider, "model": profile.get("model", ""), "effort": profile.get("effort", ""),
+            "profiles": profiles, "providers": {key: {"label": label, "installed": ai_available(key)}
+                for key, (label, _) in ai_cli.PROVIDERS.items()}}
+
+
+def ai_available(provider=None):
+    provider = provider or load_config().get("ai_provider", "claude")
+    if provider == "claude":
+        return os.access(CLAUDE_BIN, os.X_OK)
+    return provider in ai_cli.PROVIDERS and ai_cli.available(provider)
+
+
+def run_ai(content, cwd, settings, schema=None, session=None, resume=None, on_text=None, on_proc=None):
+    if settings.get("provider", "claude") == "claude":
+        result = run_claude(content, cwd, settings, schema, session, resume, on_text, on_proc)
+        result["provider"] = "claude"
+        return result
+    return ai_cli.run(content, settings, schema, on_text, on_proc, CLAUDE_TIMEOUT)
 
 
 _str = {"type": "string"}
@@ -2727,7 +2902,7 @@ class Instructor:
 
     @classmethod
     def available(cls):
-        return Subtitles.available() and os.access(CLAUDE_BIN, os.X_OK)
+        return Subtitles.available() and ai_available()
 
     @classmethod
     def _load(cls, lid):
@@ -2741,6 +2916,7 @@ class Instructor:
     def _save(cls, lid, job):
         with cls.lock:
             data = {"parts": [{k: p[k] for k in ("start", "end", "frames")} for p in job["parts"]],
+                    "provider": job["settings"].get("provider", "claude"),
                     "results": {str(i): r for i, r in job["results"].items()}, "duration": job.get("duration") or 0,
                     "complete": job.get("parts_complete", False)}
         tmp = cls.folder(lid) / "parts.tmp"
@@ -2763,7 +2939,7 @@ class Instructor:
         except (OSError, ValueError):
             pass
         if not cls.available():
-            return {"status": "unavailable", "claude": os.access(CLAUDE_BIN, os.X_OK), "whisper": Subtitles.available()}
+            return {"status": "unavailable", "claude": ai_available(), "provider": ai_settings()["provider"], "whisper": Subtitles.available()}
         saved = cls._load(lid)
         return {"status": "none", "groq": bool(groq_key()), "subs": Subtitles.path(lid).is_file(),
                 "resume": len(saved["results"])}
@@ -2776,19 +2952,22 @@ class Instructor:
         for i in sorted(job["results"]):
             for k in ("sections", "terms", "announcements"):
                 out[k] = out[k] + job["results"][i][k]
+        out["provider"] = job["settings"].get("provider", "claude")
         out["frames"] = {f["id"]: f["t"] for p in job["parts"] for f in p["frames"]}
         return out
 
     @classmethod
     def start(cls, lid, course, lecture, redo=False):
         if not cls.available():
-            raise ApiError(501, "The AI instructor needs Claude Code and Whisper installed (see the README)")
+            raise ApiError(501, "The AI instructor needs the selected AI CLI and Whisper installed (see README)")
         with cls.lock:
             if lid in cls.jobs and cls.jobs[lid]["status"] == "running":
                 return
         if redo:
             (cls.folder(lid) / "summary.json").unlink(missing_ok=True)
         saved = cls._load(lid)
+        if saved.get("provider", "claude") != ai_settings()["provider"]:
+            saved["results"] = {}
         frames_ok = (cls.folder(lid) / "frames" / "frames.json").is_file()
         complete = saved.get("complete") and saved["parts"] and frames_ok and Subtitles.path(lid).is_file()
         job = {"status": "running", "stage": "queued", "done": 0, "downloaded": 0, "duration": saved.get("duration") or 0,
@@ -2962,7 +3141,7 @@ class Instructor:
             content += [{"type": "text", "text": f"Frame {f['id']} at [{_clock(f['t'])}]"},
                         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                      "data": base64.b64encode(data).decode()}}]
-        result = run_claude(content, cls.folder(lid), job["settings"], schema=PART_SCHEMA,
+        result = run_ai(content, cls.folder(lid), job["settings"], schema=PART_SCHEMA,
                             on_proc=lambda proc: job.update(claude=proc))
         job["model"] = _model_of(result)
         return clean_part(result["structured_output"], {f["id"] for f in p["frames"]}, p["start"], p["end"])
@@ -2973,7 +3152,7 @@ class Instructor:
             summary = cls._assemble(job)
         if summary["sections"]:
             header = LECTURE_HEADER.format(course=job["course"] or "-", lecture=job["lecture"] or "-")
-            result = run_claude([{"type": "text", "text": FINAL_PROMPT.format(header=header, sections=summary_as_text(summary))}],
+            result = run_ai([{"type": "text", "text": FINAL_PROMPT.format(header=header, sections=summary_as_text(summary))}],
                                 cls.folder(lid), job["settings"], schema=FINAL_SCHEMA,
                                 on_proc=lambda proc: job.update(claude=proc))
             raw = result["structured_output"]
@@ -2984,7 +3163,7 @@ class Instructor:
             summary.update(title="Χωρίς διδακτικό περιεχόμενο",
                            overview="Δεν αναγνωρίστηκε ομιλία ή ύλη σε αυτή την καταγραφή.")
         summary.update(created=datetime.now(timezone.utc).isoformat(timespec="seconds"), model=job.get("model", ""),
-                       effort=job["settings"].get("effort", ""),
+                       effort=job["settings"].get("effort", ""), provider=job["settings"].get("provider", "claude"),
                        duration=round(job.get("duration") or (summary["sections"][-1]["start"] if summary["sections"] else 0)))
         tmp = cls.folder(lid) / "summary.tmp"
         tmp.write_text(json.dumps(summary, ensure_ascii=False))
@@ -3030,12 +3209,12 @@ class Chat:
 
     @classmethod
     def ask(cls, lid, question, course, lecture):
-        if not Instructor.available():
-            raise ApiError(501, "Questions need Claude Code installed (see the README)")
+        if not ai_available():
+            raise ApiError(501, "Questions need the selected AI CLI installed (see README)")
         with cls.lock:
             if cls.jobs.get(lid, {}).get("status") == "running":
                 raise ApiError(409, "Περίμενε να τελειώσει η απάντηση")
-            job = cls.jobs[lid] = {"status": "running", "pending": "", "error": "", "proc": None}
+            job = cls.jobs[lid] = {"status": "running", "pending": "", "error": "", "proc": None, "settings": ai_settings()}
         chat = cls._load(lid)
         chat["messages"].append({"role": "user", "text": question,
                                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
@@ -3068,12 +3247,12 @@ class Chat:
         question = chat["messages"][-1]["text"]
         on_text = lambda t: job.update(pending=job["pending"] + t)
         on_proc = lambda proc: job.update(proc=proc)
-        settings = ai_settings()
+        settings = job["settings"]
         try:
             result = None
-            if chat.get("session"):
+            if settings["provider"] == "claude" and chat.get("provider", "claude") == "claude" and chat.get("session"):
                 try:
-                    result = run_claude([{"type": "text", "text": question}], Instructor.folder(lid), settings,
+                    result = run_ai([{"type": "text", "text": question}], Instructor.folder(lid), settings,
                                         resume=chat["session"], on_text=on_text, on_proc=on_proc)
                 except RuntimeError:
                     if cls.jobs.get(lid) is not job:
@@ -3081,14 +3260,15 @@ class Chat:
                     job["pending"] = ""             # the conversation is gone: start a new one with the history
             if result is None:
                 chat["session"] = str(uuid.uuid4())
+                chat["provider"] = settings["provider"]
                 content = [{"type": "text", "text": cls._context(lid, course, lecture, chat["messages"][:-1])},
                            {"type": "text", "text": f"QUESTION\n{question}"}]
-                result = run_claude(content, Instructor.folder(lid), settings, session=chat["session"],
+                result = run_ai(content, Instructor.folder(lid), settings, session=chat["session"],
                                     on_text=on_text, on_proc=on_proc)
             if cls.jobs.get(lid) is not job:
                 return
             chat["messages"].append({"role": "assistant", "text": str(result.get("result") or job["pending"]).strip(),
-                                     "model": _model_of(result), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+                                     "model": _model_of(result), "provider": settings["provider"], "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
             cls._save(lid, chat)
             with cls.lock:
                 if cls.jobs.get(lid) is job:
@@ -3108,7 +3288,6 @@ class Chat:
 # as the instructor above: the student's own plan, no tools, the sources passed as data.
 BRIEF_DIR = SUBS_DIR.parent / "briefing"
 BRIEF_DAYS = 14                     # how far back mail and announcements are read
-BRIEF_FRESH = 20 * 60               # an automatic briefing newer than this isn't looked at again
 BRIEF_MAIL = 25
 GREEK_DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
 _refs = {"type": "array", "items": _str, "description": "ids of the sources (M…, A…, N…, D…)"}
@@ -3205,31 +3384,34 @@ class Briefing:
             job = cls.jobs.get(key)
             out = {"status": "running" if job and job.get("status") == "running" else
                    "error" if job and job.get("status") == "error" else "done" if saved else
-                   "none" if os.access(CLAUDE_BIN, os.X_OK) else "unavailable"}
+                   "none" if ai_available() else "unavailable"}
             if job:
                 out.update(step=job.get("step", ""), error=job.get("error", ""))
         if saved:
             out.update(brief=saved["brief"], refs=saved["refs"], counts=saved["counts"], generated=saved["generated"],
-                       checked=saved.get("checked", saved["generated"]), model=saved.get("model", ""), done=done)
+                       checked=saved.get("checked", saved["generated"]), provider=saved.get("provider", "claude"), model=saved.get("model", ""), done=done)
         return out
 
     @classmethod
     def start(cls, s, force=False):
-        if not os.access(CLAUDE_BIN, os.X_OK):
+        if not ai_available():
             return
         key = _brief_key(s)
-        saved = cls._load(key)
-        if not force and saved:
-            try:
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(saved.get("checked") or saved["generated"])).total_seconds()
-            except (KeyError, ValueError):
-                age = BRIEF_FRESH
-            if age < BRIEF_FRESH:
-                return
         with cls.lock:
             if cls.jobs.get(key, {}).get("status") == "running":
                 return
-            job = cls.jobs[key] = {"status": "running", "step": "mail", "error": "", "proc": None}
+            saved = cls._load(key)
+            if not force and saved:
+                try:
+                    generated = datetime.fromisoformat(saved["generated"].replace("Z", "+00:00"))
+                    if generated.tzinfo is None:
+                        generated = generated.replace(tzinfo=timezone.utc)
+                    today = athens_now()
+                    if generated.astimezone(today.tzinfo).date() == today.date():
+                        return
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    pass  # Invalid legacy timestamp: rebuild instead of suppressing the briefing.
+            job = cls.jobs[key] = {"status": "running", "step": "mail", "error": "", "proc": None, "settings": ai_settings()}
         threading.Thread(target=cls._run, args=(s, key, job, force), daemon=True).start()
 
     @classmethod
@@ -3300,7 +3482,8 @@ class Briefing:
     def _run(cls, s, key, job, force):
         try:
             blocks, refs, counts = cls._gather(s, job)
-            fingerprint = hashlib.sha256("\n\n".join(blocks).encode()).hexdigest()
+            settings = job["settings"]
+            fingerprint = hashlib.sha256(("\n\n".join(blocks) + json.dumps([settings["provider"], settings["model"], settings["effort"], athens_now().date().isoformat()])).encode()).hexdigest()
             saved = cls._load(key)
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             BRIEF_DIR.mkdir(parents=True, exist_ok=True)
@@ -3313,13 +3496,13 @@ class Briefing:
                 prompt = BRIEF_PROMPT.format(inst=INSTITUTIONS.get(s.inst, {}).get("name", "university"),
                                              now=f"{GREEK_DAYS[athens.weekday()]} {athens:%Y-%m-%d %H:%M}")
                 sources = "\n\n".join(blocks) if blocks else "(no recent mail, announcements or assignments)"
-                result = run_claude([{"type": "text", "text": prompt}, {"type": "text", "text": "SOURCES\n\n" + sources}],
-                                    BRIEF_DIR, ai_settings(), schema=BRIEF_SCHEMA, on_proc=lambda p: job.update(proc=p))
+                result = run_ai([{"type": "text", "text": prompt}, {"type": "text", "text": "SOURCES\n\n" + sources}],
+                                    BRIEF_DIR, settings, schema=BRIEF_SCHEMA, on_proc=lambda p: job.update(proc=p))
                 if cls.jobs.get(key) is not job:
                     return
                 brief = cls._clean(result["structured_output"], refs)
                 cls._write(key, {"brief": brief, "refs": refs, "counts": counts, "fingerprint": fingerprint,
-                                 "generated": now, "checked": now, "model": _model_of(result)})
+                                 "generated": now, "checked": now, "model": _model_of(result), "provider": result["provider"]})
                 if gcal_settings(s)["auto"]:
                     GoogleCalendar.start(s)             # the new to-dos and dates go to Google Calendar too
             with cls.lock:
@@ -3675,8 +3858,8 @@ class Study:
 
     @classmethod
     def generate(cls, s, deck_id, course, code, sources, count):
-        if not os.access(CLAUDE_BIN, os.X_OK):
-            raise ApiError(501, "Οι κάρτες γράφονται από το Claude: χρειάζεται το Claude Code (δες το README)")
+        if not ai_available():
+            raise ApiError(501, "Install and sign in to the selected AI CLI (see README)")
         if deck_id:
             deck = cls.deck(deck_id)
         else:
@@ -3686,7 +3869,7 @@ class Study:
             raise ApiError(409, "Οι κάρτες αυτής της τράπουλας ήδη γράφονται")
         with _study_lock:
             _write_json(cls.deck_path(deck["id"]), deck)
-        job = cls.jobs[deck["id"]] = {"status": "running", "step": "sources", "error": "", "proc": None}
+        job = cls.jobs[deck["id"]] = {"status": "running", "step": "sources", "error": "", "proc": None, "settings": ai_settings()}
         threading.Thread(target=cls._run, args=(s, deck["id"], job, sources, count), daemon=True).start()
         return deck["id"]
 
@@ -3756,8 +3939,8 @@ class Study:
             job["step"] = "claude"
             prompt = CARD_PROMPT.format(course=deck["course"] or "-", count=count, existing=(
                 "\nThe deck already has these cards; write different ones:\n" + "\n".join(f"- {f}" for f in existing)) if existing else "")
-            result = run_claude([{"type": "text", "text": prompt}, {"type": "text", "text": "SOURCES\n\n" + "\n\n".join(blocks)}],
-                                STUDY_DIR, ai_settings(), schema=CARD_SCHEMA, on_proc=lambda p: job.update(proc=p))
+            result = run_ai([{"type": "text", "text": prompt}, {"type": "text", "text": "SOURCES\n\n" + "\n\n".join(blocks)}],
+                                STUDY_DIR, job["settings"], schema=CARD_SCHEMA, on_proc=lambda p: job.update(proc=p))
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             new = []
             seen = {" ".join(f.lower().split()) for f in existing}
@@ -3771,7 +3954,7 @@ class Study:
                 at = _secs_in(c.get("at"), 0, 6 * 3600) if ref.get("type") == "lecture" else 0
                 new.append({"id": secrets.token_hex(5), "front": front, "back": back, "topic": _text(c.get("topic"), 60),
                             "kind": c.get("kind") if c.get("kind") in CARD_KINDS else "concept",
-                            "source": dict(ref, at=at) if ref else None, "created": now})
+                            "source": dict(ref, at=at) if ref else None, "created": now, "provider": result["provider"], "model": _model_of(result)})
             key = lambda r: r.get("id") or r.get("url") or r.get("type")
             with _study_lock:
                 deck = cls.deck(did)
@@ -4037,6 +4220,9 @@ class GoogleCalendar:
     @classmethod
     def start(cls, s, include=None):
         key = _brief_key(s)
+        if ai_settings()["provider"] != "claude":
+            cls.jobs[key] = {"status": "error", "error": "Google Calendar sync requires the Claude connector. Use the .ics export with Gemini or ChatGPT.", "results": []}
+            return
         if cls.jobs.get(key, {}).get("status") == "running":
             return
         job = cls.jobs[key] = {"status": "running", "step": "events", "error": "", "proc": None, "results": []}
@@ -4069,6 +4255,8 @@ class GoogleCalendar:
                     "--tools", "", "--no-session-persistence", "--allowedTools", ",".join(tools),
                     "--json-schema", json.dumps(GCAL_SCHEMA)] + (["--strict-mcp-config"] if strict else [])
             st = ai_settings()
+            if st["provider"] != "claude":
+                raise RuntimeError("Provider changed. Google Calendar sync requires the Claude connector; use .ics export.")
             if st.get("model"):
                 args += ["--model", st["model"]]
             proc = subprocess.Popen(args, cwd=str(BRIEF_DIR), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -4108,8 +4296,138 @@ class GoogleCalendar:
             job.update(status="error", error=str(e), proc=None)
 
 
-# Piazza: built from the notification emails Piazza sends for new posts. Piazza has no public API for students,
-# and its private one is not used (same rule as UniStudents); every post links to piazza.com.
+# Piazza: direct course feeds with a separate, session-only account connection.
+# Email notifications remain available through /api/piazza/emails.
+class _PiazzaRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urllib.parse.urlsplit(newurl)
+        if target.scheme != "https" or target.hostname != "piazza.com":
+            raise ApiError(502, "Piazza redirected to an unsupported sign-in page")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class PiazzaClient:
+    """An explicitly connected Piazza account. Cookies and cached posts live only in the app session."""
+    def __init__(self):
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(_PiazzaRedirect,
+            urllib.request.HTTPSHandler(context=TLS), urllib.request.HTTPCookieProcessor(self.jar))
+        self.lock = threading.RLock()
+        self.classes = []
+        self.cache = {}
+
+    def _open(self, path, data=None, headers=None):
+        req = urllib.request.Request("https://piazza.com" + path, data=data, headers={
+            "User-Agent": "Mozilla/5.0 StudentHub", "Accept": "application/json,text/html", **(headers or {})})
+        try:
+            with self.opener.open(req, timeout=NET_TIMEOUT) as response:
+                raw = response.read(8 * 1024 * 1024 + 1)
+                if len(raw) > 8 * 1024 * 1024:
+                    raise ApiError(502, "Piazza returned too much data")
+                return raw.decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise ApiError(409, "Piazza sign-in expired or was rejected. Connect your Piazza account again")
+            if e.code == 429:
+                raise ApiError(429, "Piazza is limiting requests. Please try again later")
+            raise ApiError(502, "Piazza is temporarily unavailable")
+        except (OSError, urllib.error.URLError):
+            raise ApiError(502, "Couldn't reach Piazza. Please try again")
+
+    def rpc(self, method, params=None):
+        headers = {"Content-Type": "application/json"}
+        token = next((c.value for c in self.jar if c.name == "session_id"), None)
+        if token:
+            headers["CSRF-Token"] = token
+        raw = self._open("/logic/api?" + urllib.parse.urlencode({"method": method, "aid": uuid.uuid4().hex}),
+                         json.dumps({"method": method, "params": params or {}}).encode(), headers)
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            raise ApiError(409, "Piazza needs you to sign in again. Connect your Piazza account")
+        if not isinstance(payload, dict) or payload.get("error") or payload.get("result") is None:
+            raise ApiError(409, "Piazza couldn't load this data. Reconnect your account or open the course on Piazza")
+        return payload["result"]
+
+    def login(self, email, password):
+        with self.lock:
+            token_page = self._open("/main/csrf_token")
+            match = re.search(r'''(?i)csrf_token\s*=\s*["']([^"']+)["']''', token_page)
+            if not match:
+                raise ApiError(502, "Couldn't start Piazza sign-in. Please try again later")
+            self._open("/class", urllib.parse.urlencode({"email": email, "password": password,
+                       "csrf_token": match[1], "from": "/signup"}).encode(),
+                       {"Content-Type": "application/x-www-form-urlencoded"})
+            self.refresh_classes()
+
+    def refresh_classes(self):
+        status = self.rpc("user.status")
+        if not isinstance(status, dict) or not status.get("id"):
+            raise ApiError(409, "Piazza sign-in failed. Check your Piazza email and password")
+        self.classes = [{"id": str(c["id"]), "name": str(c.get("name") or c.get("course_number") or c["id"]),
+                         "term": str(c.get("term") or ""), "url": f"https://piazza.com/class/{c['id']}"}
+                        for c in status.get("networks", []) if isinstance(c, dict) and re.fullmatch(r"[a-zA-Z0-9]+", str(c.get("id", "")))]
+
+    def require_class(self, nid):
+        if nid not in {c["id"] for c in self.classes}:
+            raise ApiError(404, "This course isn't in your Piazza account")
+
+    def feed(self, nid="", offset=0, refresh=False):
+        with self.lock:
+            if refresh:
+                self.refresh_classes()
+                self.cache.clear()
+            if not self.classes:
+                return {"connected": True, "classes": [], "items": [], "classId": "", "offset": 0, "more": False}
+            nid = nid or self.classes[0]["id"]
+            self.require_class(nid)
+            key = (nid, offset)
+            hit = self.cache.get(key)
+            if not hit or time.time() - hit[0] > 60:
+                data = self.rpc("network.get_my_feed", {"nid": nid, "limit": 50, "offset": offset, "sort": "updated"})
+                if not isinstance(data, dict) or not isinstance(data.get("feed"), list):
+                    raise ApiError(502, "Piazza returned an unexpected feed")
+                rows = data["feed"]
+                name = next(c["name"] for c in self.classes if c["id"] == nid)
+                items = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    cid = str(row.get("id") or "")
+                    if not re.fullmatch(r"[a-zA-Z0-9]+", cid):
+                        continue
+                    items.append({"id": cid, "classId": nid, "course": name,
+                        "title": html_to_text(str(row.get("subject") or "Untitled post")),
+                        "snippet": html_to_text(str(row.get("content_snipet") or row.get("content_snippet") or "")),
+                        "kind": row.get("type", "post"), "date": row.get("updated") or row.get("created") or "",
+                        "unread": bool(row.get("unread", row.get("is_new", False))), "number": row.get("nr"),
+                        "url": f"https://piazza.com/class/{nid}/post/{cid}"})
+                hit = (time.time(), {"items": items, "more": bool(data["more"]) if "more" in data else len(rows) >= 50})
+                if len(self.cache) >= 40:
+                    self.cache.clear()
+                self.cache[key] = hit
+            return {"connected": True, "classes": self.classes, "classId": nid, "offset": offset, **hit[1]}
+
+    def post(self, nid, cid):
+        with self.lock:
+            self.require_class(nid)
+            if not re.fullmatch(r"[a-zA-Z0-9]+", cid):
+                raise ApiError(400, "Invalid Piazza post")
+            data = self.rpc("content.get", {"nid": nid, "cid": cid, "student_view": None})
+            return self.post_text(data)
+
+    @classmethod
+    def post_text(cls, data, depth=0):
+        if not isinstance(data, dict) or depth > 8:
+            return {"title": "", "text": "", "kind": "post", "children": []}
+        history = data.get("history") or [{}]
+        latest = history[0] if isinstance(history, list) and isinstance(history[0], dict) else {}
+        return {"title": html_to_text(str(latest.get("subject") or data.get("subject") or "")),
+                "text": html_to_text(str(latest.get("content") or data.get("content") or "")),
+                "kind": data.get("type", "post"),
+                "children": [cls.post_text(c, depth + 1) for c in (data.get("children") or [])[:200]]}
+
+
 PIAZZA_POST_RE = re.compile(r"https?://piazza\.com/class/([a-z0-9]{6,})(?:/post/|\?cid=)([a-z0-9]+)", re.I)
 PIAZZA_CLASS_RE = re.compile(r"https?://piazza\.com/class/([a-z0-9]{6,})", re.I)
 PIAZZA_FOOTER_RE = re.compile(r"(?im)^\s*(?:-{2,}|_{3,}|you (?:are receiving|received) this|to (?:stop|unsubscribe|change)|"
@@ -4242,7 +4560,7 @@ def eclass_blocks(page, base):
     return parser.blocks
 
 
-class _Tables(HTMLParser):
+class _CourseTables(HTMLParser):
     """Every table's rows, each cell with its text, links, icon classes and hidden input values."""
 
     def __init__(self, base):
@@ -4302,7 +4620,7 @@ class _Tables(HTMLParser):
 
 
 def page_tables(page, base):
-    parser = _Tables(base)
+    parser = _CourseTables(base)
     parser.feed(page)
     parser.close()
     for tb in parser.tables:
@@ -4483,7 +4801,9 @@ class Session:
         self.eclass = None
         self.ditlab = None
         self.portal = None
+        self.piazza = None
         self.cas = getattr(account, "cas", None)      # shared university SSO session
+        self.assistant = None
         self.browser_sso = {}                         # service -> when the browser last signed in via a link
 
 
@@ -4497,7 +4817,10 @@ def reap_sessions():
     with _sessions_lock:
         dead = [t for t, s in _sessions.items() if now - s.seen > SESSION_IDLE]
         for t in dead:
-            _sessions.pop(t).account.close()
+            session = _sessions.pop(t)
+            if session.assistant:
+                session.assistant.cancel(clear=True, close=True)
+            session.account.close()
 
 
 def login_throttled():
@@ -4660,7 +4983,9 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
-        if n < 0 or n > MAX_BODY:
+        upload_path = urllib.parse.urlsplit(self.path).path
+        limit = (52 << 20) if upload_path == "/api/tools/process" else (20 << 20) if upload_path == "/api/tools/pdf" else MAX_BODY
+        if n < 0 or n > limit:
             self.close_connection = True        # can't skip it safely; drop the connection
             self.body = b""
             return False
@@ -4761,6 +5086,67 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype, extra, cacheable=True)
 
+    # ---- local document tools
+    def api_get_tools(self, q):
+        self._session()
+        self._json(200, {"pdf": bool(shutil.which("libreoffice") or shutil.which("soffice")), **student_tools.capabilities()})
+
+    def api_post_tools_process(self, q):
+        self._require_csrf(self._session())
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data;") or "\r" in ctype or "\n" in ctype:
+            raise ApiError(415, "Choose files to process")
+        message = BytesParser(policy=policy.default).parsebytes(
+            ("Content-Type: " + ctype + "\r\nMIME-Version: 1.0\r\n\r\n").encode() + self.body)
+        if not message.is_multipart():
+            raise ApiError(400, "Malformed file upload")
+        files, fields = [], {}
+        for part in message.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            filename = part.get_filename()
+            data = part.get_payload(decode=True) or b""
+            if filename is not None:
+                files.append((filename, data))
+            elif name and len(data) <= 4096:
+                fields[name] = data.decode("utf-8", "replace")
+            else:
+                raise ApiError(400, "Invalid tool options")
+        try:
+            result, mime, filename = student_tools.process((q.get("op") or [""])[0], files, fields)
+        except student_tools.ToolError as error:
+            raise ApiError(error.status, str(error))
+        if mime == "application/json":
+            return self._json(200, result)
+        self._send(200, result, mime, {"Content-Disposition": "attachment; filename*=UTF-8''" + urllib.parse.quote(filename, safe="")})
+
+    def api_post_tools_pdf(self, q):
+        self._require_csrf(self._session())
+        extension = (q.get("ext") or [""])[0].lower()
+        if extension not in ("doc", "docx", "odt"):
+            raise ApiError(400, "Choose a Word (.doc, .docx) or OpenDocument (.odt) file")
+        if not self.body:
+            raise ApiError(400, "The document is empty")
+        executable = shutil.which("libreoffice") or shutil.which("soffice")
+        if not executable:
+            raise ApiError(503, "Install LibreOffice on the computer running Student Hub, then try again")
+        with tempfile.TemporaryDirectory(prefix="student-hub-pdf-") as folder:
+            root = Path(folder)
+            source = root / ("document." + extension)
+            source.write_bytes(self.body)
+            try:
+                result = subprocess.run([
+                    executable, "-env:UserInstallation=" + (root / "profile").as_uri(),
+                    "--headless", "--convert-to", "pdf", "--outdir", folder, str(source),
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90,
+                    env=dict(os.environ, SAL_USE_VCLPLUGIN="svp"))
+            except subprocess.TimeoutExpired:
+                raise ApiError(504, "Conversion took too long. Try a smaller document")
+            output = root / "document.pdf"
+            if result.returncode or not output.is_file():
+                raise ApiError(422, "Couldn't convert this document. Check that it opens in Word or LibreOffice and isn't password protected")
+            self._send(200, output.read_bytes(), "application/pdf",
+                       {"Content-Disposition": 'attachment; filename="document.pdf"'})
+
     # ---- session
     def api_get_session(self, q):
         s = self._session(required=False)
@@ -4822,12 +5208,17 @@ class Handler(BaseHTTPRequestHandler):
             self._require_csrf(s)
             with _sessions_lock:
                 _sessions.pop(s.token, None)
+            if s.assistant:
+                s.assistant.cancel(clear=True, close=True)
             s.account.close()
             s.account.password = None
             if s.cas:                       # forget the university SSO session and its password
                 s.cas.password = None
                 s.cas.jar.clear()
-            s.eclass = s.ditlab = s.portal = s.cas = None
+            if s.piazza:
+                s.piazza.jar.clear()
+                s.piazza.cache.clear()
+            s.eclass = s.ditlab = s.portal = s.cas = s.piazza = None
         self._json(200, {"ok": True}, {"Set-Cookie": "sh_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
 
     # ---- mail
@@ -5168,7 +5559,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, Briefing.status(self._session()))
 
     def api_post_briefing(self, q):
-        """Starts the briefing: auto (after sign-in; skipped when recent) or forced (the refresh button)."""
+        """Starts the briefing: auto (after sign-in; once per Athens calendar day) or forced (the refresh button)."""
         s = self._session()
         self._require_csrf(s)
         Briefing.start(s, force=bool(self._read_json().get("force")))
@@ -5458,8 +5849,54 @@ class Handler(BaseHTTPRequestHandler):
     def api_get_calendar_google(self, q):
         self._json(200, GoogleCalendar.status(self._session()))
 
-    # ---- Piazza (from its notification emails)
+    # ---- Piazza
     def api_get_piazza(self, q):
+        s = self._session()
+        if not s.piazza:
+            return self._json(200, {"connected": False, "classes": [], "items": []})
+        try:
+            offset = int((q.get("offset") or ["0"])[0])
+        except ValueError:
+            raise ApiError(400, "Invalid feed offset")
+        if not 0 <= offset <= 100000:
+            raise ApiError(400, "Invalid feed offset")
+        self._json(200, s.piazza.feed((q.get("class") or [""])[0], offset,
+                                    (q.get("refresh") or ["0"])[0] == "1"))
+
+    def api_post_piazza_connect(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        body = self._read_json()
+        email, password = body.get("email"), body.get("password")
+        if not isinstance(email, str) or not isinstance(password, str) or not email.strip() or not password:
+            raise ApiError(400, "Enter your Piazza email and password")
+        # Limit retries per Student Hub session; never persist the separate Piazza password.
+        last = s.cache.get(("piazza-login",), 0)
+        if time.time() - last < 5:
+            raise ApiError(429, "Wait a few seconds before trying Piazza sign-in again")
+        s.cache[("piazza-login",)] = time.time()
+        client = PiazzaClient()
+        client.login(email.strip(), password)
+        s.piazza = client
+        self._json(200, {"ok": True})
+
+    def api_post_piazza_disconnect(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        if s.piazza:
+            with s.piazza.lock:
+                s.piazza.jar.clear()
+                s.piazza.cache.clear()
+                s.piazza = None
+        self._json(200, {"ok": True})
+
+    def api_get_piazza_post(self, q):
+        s = self._session()
+        if not s.piazza:
+            raise ApiError(409, "Connect your Piazza account first")
+        self._json(200, s.piazza.post((q.get("class") or [""])[0], (q.get("id") or [""])[0]))
+
+    def api_get_piazza_emails(self, q):
         s = self._session()
         if not s.account.mail:
             raise ApiError(409, "Χρειάζεται email για το Piazza")
@@ -5480,19 +5917,54 @@ class Handler(BaseHTTPRequestHandler):
             hit = s.cache[key] = (time.time(), {"items": items, "classes": [{"id": c, "name": n, "url": f"https://piazza.com/class/{c}"} for c, n in classes]})
         self._json(200, hit[1])
 
+    def _student_assistant(self, s):
+        with _sessions_lock:
+            if s.assistant is None:
+                s.assistant = student_assistant.Assistant(sys.modules[__name__], s)
+            return s.assistant
+
+    def api_get_assistant(self, q):
+        self._json(200, self._student_assistant(self._session()).status())
+
+    def api_post_assistant(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        body = self._read_json()
+        question = body.get("question")
+        if not isinstance(question, str) or not question.strip() or len(question) > 6000:
+            raise ApiError(400, "Write a question (up to 6,000 characters)")
+        assistant = self._student_assistant(s)
+        assistant.ask(question.strip())
+        self._json(202, assistant.status())
+
+    def api_delete_assistant(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        body = self._read_json()
+        assistant = self._student_assistant(s)
+        assistant.cancel(clear=body.get("clear") is True)
+        self._json(200, assistant.status())
+
     def api_get_ai_settings(self, q):
-        self._uniflix_session()
+        self._session()
         self._json(200, ai_settings())
 
     def api_post_ai_settings(self, q):
-        s = self._uniflix_session()
+        s = self._session()
         self._require_csrf(s)
         b = self._read_json()
-        if b.get("model", "") not in AI_MODELS or b.get("effort", "") not in AI_EFFORTS:
-            raise ApiError(400, "Unknown model or thinking level")
+        provider, model, effort = b.get("provider", "claude"), b.get("model", ""), b.get("effort", "")
+        if not isinstance(provider, str) or provider not in ai_cli.PROVIDERS or not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9._:/-]{0,120}", model):
+            raise ApiError(400, "Unknown AI provider or invalid model")
+        allowed = {"claude": AI_EFFORTS, "chatgpt": ("", "low", "medium", "high", "xhigh"),
+                   "gemini": ("",), "antigravity": ("", "low", "medium", "high")}
+        if effort not in allowed[provider]:
+            raise ApiError(400, "Unsupported thinking level for this provider")
         with _config_lock:
             cfg = load_config()
-        cfg.update(ai_model=b.get("model", ""), ai_effort=b.get("effort", ""))
+        profiles = dict(cfg.get("ai_profiles") or {})
+        profiles[provider] = {"model": model, "effort": effort}
+        cfg.update(ai_provider=provider, ai_profiles=profiles)
         save_config(cfg)
         self._json(200, ai_settings())
 
@@ -5926,6 +6398,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_get_announcements(self, q):
         s = self._session()
+        topic = (q.get("topic") or [""])[0]
+        if topic in _DIT_TOPIC_URLS and s.inst == "uoa":
+            page = (q.get("page") or ["0"])[0]
+            result = dit_topic_announcements(topic, page,
+                                            force=(q.get("refresh") or ["0"])[0] == "1")
+            self._json(200, result)
+            return
         feeds = feeds_for(load_config(), s.inst)
         fid = (q.get("feed") or [""])[0]
         if fid:
@@ -5939,7 +6418,7 @@ class Handler(BaseHTTPRequestHandler):
             for it in its:
                 items.append(dict(it, source=f["name"], sourceId=f["id"]))
         items.sort(key=lambda x: x["date"] or "", reverse=True)
-        self._json(200, {"items": items[:300], "errors": errors})
+        self._json(200, {"items": items, "errors": errors})
 
 
 def main():

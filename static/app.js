@@ -150,7 +150,8 @@ const state = {
   folders: ["inbox"],
   messages: [], total: 0, page: 0, selected: null, current: null,
   feeds: [], announcements: [],
-  feedItems: [], feedErrors: [],
+  feedItems: [], feedErrors: [], topicPages: new Map(), topicPageByCategory: new Map(),
+  topicLoading: new Set(), topicError: "",
   grades: { status: "idle", data: null, error: "", semester: 0, showAll: true },
   studies: { tab: "", pages: {}, tabs: [], error: "" },
   lectures: { status: "idle", data: null, error: "", year: "", course: "" },
@@ -159,7 +160,7 @@ const state = {
   briefing: { data: null, timer: 0, wasRunning: false, gcal: null, gcalTimer: 0 },
   projects: { data: null, loading: false, error: "", busy: {} },
   study: { data: null, error: "", timer: 0, lectures: null },
-  piazza: { data: null, error: "", loading: false, cls: "" },
+  piazza: { data: null, error: "", loading: false, cls: "", mode: "feed", request: 0 },
   ditlab: { status: "idle", username: "", reason: "", path: "/", items: [], results: null, emails: null, pick: null },
   eclass: { enabled: false, status: "idle", error: "", courses: [], items: [], errors: [] },
   query: "",
@@ -272,6 +273,7 @@ function setPasswordVisible(show) {
 }
 
 function showLogin(msg) {
+  resetStudentAssistant();
   setPasswordVisible(false);
   $("app").hidden = true;
   $("compose").hidden = true;
@@ -320,8 +322,14 @@ async function onLogin(e) {
 
 async function logout() {
   try { await api("/api/logout", { method: "POST", body: {} }); } catch {}
+  Object.assign(state.piazza, { data: null, cls: "", mode: "feed", loading: false, error: "", request: state.piazza.request + 1 });
+  $("piazza-body").replaceChildren();
+  resetExtraTools();
+  $("tools-body").replaceChildren();
   state.csrf = "";
   state.messages = []; state.current = null;
+  state.feedItems = []; state.announcements = [];
+  state.topicPages.clear(); state.topicPageByCategory.clear(); state.topicLoading.clear(); state.topicError = "";
   Object.assign(state.grades, { status: "idle", data: null, error: "", semester: 0 });
   Object.assign(state.lectures, { status: "idle", data: null, error: "", year: "", course: "" });
   Object.assign(state.timetable, { status: "idle", data: null, error: "", allSections: false, editing: false });
@@ -366,7 +374,7 @@ async function startApp(afterLogin = false) {
   loadAnnouncements();
   Promise.resolve(loadEclass()).finally(() => startBriefing(false));    // eClass signed in first, then shared
   loadProjects(false, true);
-  if (s.mail) loadPiazza(false, true);
+  loadPiazza(false, true);
   loadDitlabStatus();
 }
 
@@ -421,17 +429,22 @@ function feedColor(id) { return `hsl(${hue(id)} 70% 55%)`; }
 
 function renderFeedNav() {
   const all = { type: "ann" };
-  $("nav-feeds").replaceChildren(navItem({ label: "All Announcements", iconPath: ICONS.megaphone,
-    active: isView(all), count: state.announcements.length || "", onclick: () => navigate(all) }));
-
   const counts = new Map();
-  for (const a of state.announcements) if (a.category) counts.set(a.category, (counts.get(a.category) || 0) + 1);
-  const topics = [...counts].sort((a, b) => b[1] - a[1]);
-  $("topics-head").hidden = topics.length < 2;
-  $("nav-topics").replaceChildren(...(topics.length < 2 ? [] : topics.map(([cat, n]) => {
-    const v = { type: "ann", cat };
-    return navItem({ label: cat, color: feedColor(cat), active: isView(v), count: n, onclick: () => navigate(v) });
-  })));
+  for (const a of state.announcements) for (const category of (a.category || "").split(",").map((x) => x.trim()).filter(Boolean))
+    counts.set(category, (counts.get(category) || 0) + 1);
+  const order = ["Προπτυχιακά", "Πρακτική Άσκηση", "Μεταπτυχιακά", "Εκδηλώσεις", "Αξιοσημείωτα", "Δυνατότητες Καριέρας"];
+  // Keep the standard university topics available even when today's feeds have
+  // no posts in one of them (e.g. internship notices are seasonal).
+  for (const topic of order) if (!counts.has(topic)) counts.set(topic, 0);
+  const rank = (cat) => order.includes(cat) ? order.indexOf(cat) : order.length;
+  const topics = [...counts].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b, "el"));
+  $("nav-topics").replaceChildren(
+    navItem({ label: "Όλες οι ανακοινώσεις", iconPath: ICONS.megaphone,
+      active: isView(all), count: state.announcements.length || "", onclick: () => navigate(all) }),
+    ...topics.map(([cat, n]) => {
+      const v = { type: "ann", cat };
+      return navItem({ label: cat, color: feedColor(cat), active: isView(v), count: n, onclick: () => navigate(v) });
+    }));
 
   const sources = state.feeds.map((f) => {
     const v = { type: "ann", feed: f.id };
@@ -447,7 +460,7 @@ function renderFeedNav() {
 const VIEW_NEEDS = {
   mail: () => state.mail, studies: () => state.inst.ditStudies, timetable: () => state.inst.ditStudies,
   lectures: () => state.inst.ditStudies, grades: () => !!state.inst.grades, ditlab: () => state.inst.ditlab,
-  deadlines: () => true, ann: () => true, briefing: () => true, projects: () => true, study: () => true, piazza: () => state.mail,
+  deadlines: () => true, ann: () => true, briefing: () => true, projects: () => true, tools: () => true, study: () => true, piazza: () => true,
 };
 
 function saveLocation() {
@@ -481,7 +494,7 @@ function restoreLocation(session) {
 function navigate(view) {
   state.view = view;
   state.query = $("search").value = "";
-  $("app").classList.remove("nav-open");
+  closeMobileSidebar();
   renderMailNav();
   renderFeedNav();
   const isMail = view.type === "mail";
@@ -495,6 +508,7 @@ function navigate(view) {
   $("deadlines-view").hidden = view.type !== "deadlines";
   $("briefing-view").hidden = view.type !== "briefing";
   $("projects-view").hidden = view.type !== "projects";
+  $("tools-view").hidden = view.type !== "tools";
   $("study-view").hidden = view.type !== "study";
   $("piazza-view").hidden = view.type !== "piazza";
   renderTopNav();
@@ -510,6 +524,10 @@ function navigate(view) {
     $("view-title").textContent = "Μελέτη για εξετάσεις";
     renderStudy();
     loadStudy();
+  } else if (view.type === "tools") {
+    $("view-title").textContent = "Εργαλεία · Tools";
+    $("view-sub").textContent = "12 tools · 6 categories";
+    renderTools();
   } else if (view.type === "projects") {
     $("view-title").textContent = "Projects";
     loadProjects();
@@ -542,6 +560,9 @@ function navigate(view) {
     $("view-title").textContent = f ? f.name : course ? course.title
       : view.feed === "eclass" ? "eClass" : view.cat || "Announcements";
     if (state.annLoaded) renderAnnouncements(); else loadAnnouncements();
+    if (view.cat && topicKeys[view.cat] && state.inst.id === "uoa") {
+      loadTopicAnnouncements(view.cat, state.topicPageByCategory.get(view.cat) || 0);
+    }
   }
   saveLocation();
 }
@@ -549,7 +570,7 @@ function navigate(view) {
 
 // ---------- briefing: what to do, from the mail, announcements and assignments (written by Claude) ----------
 const BRIEF_STEPS = [["mail", "Διαβάζω τα email"], ["eclass", "Διαβάζω τις ανακοινώσεις του eClass"],
-  ["deadlines", "Ελέγχω τις εργασίες"], ["news", "Διαβάζω τα νέα του τμήματος"], ["claude", "Το Claude γράφει την ενημέρωση"]];
+  ["deadlines", "Ελέγχω τις εργασίες"], ["news", "Διαβάζω τα νέα του τμήματος"], ["claude", "Το AI γράφει την ενημέρωση"]];
 
 async function startBriefing(force) {
   try {
@@ -665,9 +686,10 @@ function renderTopNav() {
   const study = navItem({ label: "Μελέτη", iconPath: ICONS.school, active: state.view.type === "study",
     onclick: () => navigate({ type: "study" }) });
   const unreadPiazza = (state.piazza.data?.items || []).filter((x) => x.unread).length;
-  const piazza = state.mail ? navItem({ label: "Piazza", iconPath: ICONS.forum, active: state.view.type === "piazza",
-    count: unreadPiazza || "", onclick: () => navigate({ type: "piazza" }) }) : null;
-  fill($("nav-top"), item, study, proj, piazza);
+  const piazza = navItem({ label: "Piazza", iconPath: ICONS.forum, active: state.view.type === "piazza",
+    count: unreadPiazza || "", onclick: () => navigate({ type: "piazza" }) });
+  fill($("nav-top"), item, study, proj, piazza, navItem({ label: "Εργαλεία · Tools", iconPath: ICONS.assignment,
+    active: state.view.type === "tools", onclick: () => navigate({ type: "tools" }) }));
 }
 
 function dueInfo(due) {
@@ -742,10 +764,10 @@ function renderBriefing() {
       h("h2", null, "Ετοιμάζω την ενημέρωσή σου…"),
       h("ol", { class: "brief-steps" }, BRIEF_STEPS.map(([k, label], i) => h("li", { class: i < at ? "done" : i === at ? "now" : "" },
         h("span", { class: "dot" }, i < at ? icon(ICONS.check) : i === at ? h("span", { class: "spinner" }) : ""), label))),
-      h("p", { class: "muted" }, "Το Claude διαβάζει τα πρόσφατα email, τις ανακοινώσεις και τις εργασίες σου και σου λέει τι έχεις να κάνεις.")));
+      h("p", { class: "muted" }, "Το επιλεγμένο AI διαβάζει τα πρόσφατα email, τις ανακοινώσεις και τις εργασίες σου και σου λέει τι έχεις να κάνεις.")));
   }
   if (d.status === "unavailable") {
-    return body.replaceChildren(h("div", { class: "state" }, h("p", null, "Η ενημέρωση χρειάζεται το Claude Code σε αυτόν τον υπολογιστή, συνδεδεμένο με τον λογαριασμό σου στο Claude (δες το README).")));
+    return body.replaceChildren(h("div", { class: "state" }, h("p", null, "Η ενημέρωση χρειάζεται το επιλεγμένο AI CLI εγκατεστημένο και συνδεδεμένο. Άνοιξε τις ρυθμίσεις AI στο μενού.")));
   }
   const parts = [];
   if (d.status === "error") {
@@ -793,7 +815,7 @@ function renderBriefing() {
   const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "μόλις τώρα" : m < 60 ? `πριν ${m}′` : m < 1440 ? `πριν ${Math.round(m / 60)} ώρ.` : t.toLocaleDateString("el-GR"); };
   const model = (d.model || "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2");
   parts.push(h("p", { class: "brief-foot muted" },
-    `Από το Claude${model ? ` (${model})` : ""}${src ? `, βάσει: ${src}` : ""}. Γράφτηκε ${ago(generated)}` +
+    `Από το ${aiProviderName(d.provider)}${model ? ` (${model})` : ""}${src ? `, βάσει: ${src}` : ""}. Γράφτηκε ${ago(generated)}` +
     (checked - generated > 60000 ? `, έλεγχος για νέα ${ago(checked)}` : "") + ". Μπορεί να έχει λάθη: έλεγξε τις πηγές.",
     h("button", { type: "button", class: "btn plain", disabled: d.status === "running", onclick: () => startBriefing(true) }, "Ανανέωση")));
   body.replaceChildren(...parts);
@@ -1137,7 +1159,7 @@ function renderStudy() {
     h("span", { class: "muted" }, "Κάρτες ερωτήσεων-απαντήσεων από τις διαλέξεις, τα έγγραφα του eClass και τις σημειώσεις σου."))];
   if (!d.decks.length) {
     parts.push(h("div", { class: "card proj-empty" }, h("h3", null, "Ξεκίνα με μια τράπουλα"),
-      h("p", null, "Διάλεξε μάθημα και πηγές: διαλέξεις με σύνοψη του AI καθηγητή ή υπότιτλους, PDF/Word από τα Έγγραφα του eClass, ή δικές σου σημειώσεις. Το Claude γράφει τις ερωτήσεις και τις απαντήσεις.")));
+      h("p", null, "Διάλεξε μάθημα και πηγές: διαλέξεις με σύνοψη του AI καθηγητή ή υπότιτλους, PDF/Word από τα Έγγραφα του eClass, ή δικές σου σημειώσεις. Το επιλεγμένο AI γράφει τις ερωτήσεις και τις απαντήσεις.")));
   }
   parts.push(h("div", { class: "deck-grid" }, decks.map(deckCard)));
   fill(body, parts);
@@ -1174,7 +1196,7 @@ function deckCard(x) {
       h("b", null, `${x.total} ${x.total === 1 ? "κάρτα" : "κάρτες"}`)),
     deckSources(x),
     job.status === "running" ? h("div", { class: "deck-job" }, h("span", { class: "spinner" }),
-      { sources: "Διαβάζω τις πηγές…", documents: "Διαβάζω τα έγγραφα…", claude: "Το Claude γράφει κάρτες…" }[job.step] || "Ετοιμάζω…")
+      { sources: "Διαβάζω τις πηγές…", documents: "Διαβάζω τα έγγραφα…", claude: "Το AI γράφει κάρτες…" }[job.step] || "Ετοιμάζω…")
       : job.status === "error" ? h("div", { class: "deck-job err" }, `Δεν γράφτηκαν κάρτες: ${job.error}`) : null,
     h("div", { class: "deck-actions" },
       h("button", { type: "button", class: "btn primary", disabled: !x.total, onclick: () => startSession(x.id) }, "Μελέτη"),
@@ -1279,7 +1301,7 @@ async function openDeckDialog(deck) {
   }
   course.addEventListener("change", loadSources);
   fill(form, h("h2", null, deck ? `Κι άλλες κάρτες: ${deck.title}` : "Νέα τράπουλα"),
-    h("p", { class: "muted" }, "Το Claude διαβάζει τις πηγές και γράφει ερωτήσεις-απαντήσεις για την εξέταση. Μετράει στα όρια του πλάνου σου στο Claude."),
+    h("p", { class: "muted" }, "Το επιλεγμένο AI διαβάζει τις πηγές και γράφει ερωτήσεις-απαντήσεις για την εξέταση, με τον λογαριασμό σου στο αντίστοιχο CLI."),
     field("Μάθημα", course), group("Διαλέξεις", lectures), group("Έγγραφα (eClass)", docs, "Όλοι οι φάκελοι του μαθήματος. Τα PDF, Word και PowerPoint διαβάζονται σε αυτόν τον υπολογιστή."),
     field("Σημειώσεις", notes), field("Πόσες κάρτες", count),
     h("div", { class: "proj-form-actions" }, h("button", { type: "button", class: "btn plain", onclick: close }, "Άκυρο"),
@@ -1297,7 +1319,7 @@ async function openDeckDialog(deck) {
       state.study.data = await api("/api/study/generate", { method: "POST", body: { deck: deck?.id || "", course: c?.title || deck?.course || "",
         courseCode: c?.code || deck?.courseCode || "", sources, count: Number(count.value) } });
       close();
-      toast("Το Claude γράφει τις κάρτες σου…");
+      toast("Το AI γράφει τις κάρτες σου…");
       navigate({ type: "study" });
       loadStudy();
     } catch (err) { toast(err.message); }
@@ -1410,23 +1432,140 @@ function closeSession() {
   loadStudy();
 }
 
-// ---------- Piazza: course Q&A, from the notification emails Piazza sends ----------
+// ---------- Piazza: course feed and optional email notifications ----------
 const PIAZZA_KINDS = { question: ["Ερώτηση", "q"], note: ["Σημείωση", "n"], instructor: ["Σημείωση διδάσκοντα", "i"],
   reply: ["Απάντηση", "r"], digest: ["Σύνοψη", "d"], post: ["Ανάρτηση", "p"] };
 
-async function loadPiazza(refresh = false, quiet = false) {
+function piazzaModeControls() {
   const P = state.piazza;
-  if (P.loading) return;
+  return h("div", { class: "piazza-classes" },
+    h("button", { type: "button", class: "chip" + (P.mode !== "emails" ? " on" : ""), onclick: () => switchPiazzaMode("feed") }, "Course feed"),
+    state.mail ? h("button", { type: "button", class: "chip" + (P.mode === "emails" ? " on" : ""), onclick: () => switchPiazzaMode("emails") }, "Email notifications") : null);
+}
+
+function switchPiazzaMode(mode) {
+  Object.assign(state.piazza, { mode, data: null, cls: "", error: "" });
+  loadPiazza();
+}
+
+async function loadPiazza(refresh = false, quiet = false, more = false) {
+  const P = state.piazza, request = (P.request || 0) + 1, mode = P.mode;
+  P.request = request;
   P.loading = true;
-  if (!quiet && state.view.type === "piazza" && !P.data) renderPiazza();
-  try { P.data = await api("/api/piazza" + (refresh ? "?refresh=1" : "")); P.error = ""; }
-  catch (err) { P.error = err.message; }
-  finally { P.loading = false; }
+  if (!quiet && state.view.type === "piazza") renderPiazza();
+  const q = new URLSearchParams();
+  if (refresh) q.set("refresh", "1");
+  if (mode !== "emails" && P.cls) q.set("class", P.cls);
+  if (more && P.data) q.set("offset", String(P.data.offset + 50));
+  try {
+    const data = await api((mode === "emails" ? "/api/piazza/emails" : "/api/piazza") + "?" + q);
+    if (P.request !== request) return;
+    if (more && P.data) {
+      const old = P.data.items, ids = new Set(old.map((x) => x.id));
+      data.items = [...old, ...data.items.filter((x) => !ids.has(x.id))];
+    }
+    P.data = data; P.error = "";
+    if (mode !== "emails") P.cls = data.classId || "";
+  } catch (err) { if (P.request === request) P.error = err.message; }
+  finally { if (P.request === request) P.loading = false; }
+  if (P.request !== request) return;
   renderTopNav();
   if (state.view.type === "piazza") renderPiazza();
 }
 
+function piazzaConnectForm() {
+  const P = state.piazza;
+  const email = h("input", { type: "email", name: "email", autocomplete: "username", required: true, placeholder: "Piazza email", "aria-label": "Piazza email" });
+  const password = h("input", { type: "password", name: "password", autocomplete: "current-password", required: true, placeholder: "Piazza password", "aria-label": "Piazza password" });
+  const status = h("p", { role: "status" });
+  const button = h("button", { type: "submit", class: "btn primary" }, "Connect Piazza");
+  const form = h("form", { class: "piazza-connect", onsubmit: async (event) => {
+    event.preventDefault(); button.disabled = true; status.textContent = "Connecting…";
+    try {
+      await api("/api/piazza/connect", { method: "POST", body: { email: email.value, password: password.value } });
+      password.value = "";
+      P.data = null; P.cls = "";
+      await loadPiazza();
+    } catch (err) { status.textContent = err.message; }
+    finally { password.value = ""; button.disabled = false; }
+  } }, email, password, button, status);
+  return h("div", { class: "card" }, h("h3", {}, "Connect your Piazza course feed"),
+    h("p", { class: "muted" }, "Sign in with your Piazza account to see course posts and discussions here. Your password is sent to Piazza for sign-in and isn't saved. The connection lasts for this Student Hub session."), form);
+}
+
 function renderPiazza() {
+  const P = state.piazza, d = P.data, body = $("piazza-body");
+  if (P.mode === "emails") {
+    renderPiazzaEmails();
+    body.prepend(piazzaModeControls());
+    if (P.error && d) body.prepend(h("p", { role: "alert" }, P.error));
+    return;
+  }
+  const parts = [piazzaModeControls()];
+  $("view-sub").textContent = P.loading ? "Loading Piazza feed…" : d?.connected ? "Course feed · latest activity" : "Connect your Piazza account";
+  if (P.error) parts.push(h("p", { role: "alert" }, P.error),
+    h("button", { class: "btn", type: "button", disabled: P.loading, onclick: () => loadPiazza(true) }, "Retry"));
+  if (!d) {
+    if (P.loading) parts.push(h("div", { class: "state" }, h("div", { class: "spinner" }), "Loading Piazza…"));
+    else parts.push(piazzaConnectForm());
+    return fill(body, parts);
+  }
+  if (!d.connected) { parts.push(piazzaConnectForm()); return fill(body, parts); }
+  parts.push(h("div", { class: "piazza-actions" },
+    h("button", { type: "button", class: "btn", disabled: P.loading, onclick: () => loadPiazza(true) }, "Refresh feed"),
+    h("button", { type: "button", class: "btn plain", onclick: async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await api("/api/piazza/disconnect", { method: "POST", body: {} });
+        Object.assign(P, { data: null, cls: "", error: "" }); await loadPiazza();
+      } catch (err) { toast(err.message); event.currentTarget.disabled = false; }
+    } }, "Disconnect")));
+  if (P.error) parts.push(piazzaConnectForm());
+  parts.push(h("div", { class: "piazza-classes" }, d.classes.map((c) => h("button", {
+    type: "button", class: "chip" + (P.cls === c.id ? " on" : ""), disabled: P.loading,
+    onclick: () => { P.cls = c.id; P.data = { ...d, items: [], more: false }; loadPiazza(); },
+  }, c.name, c.term ? ` · ${c.term}` : ""))));
+  const q = state.query.toLowerCase();
+  const items = d.items.filter((x) => !q || `${x.title} ${x.snippet} ${x.course}`.toLowerCase().includes(q));
+  if (!d.classes.length) parts.push(h("p", { class: "muted" }, "No courses were found in this Piazza account."));
+  else if (!items.length && !P.loading) parts.push(h("p", { class: "muted" }, q ? "No loaded posts match your search." : "No posts in this course yet."));
+  for (const x of items) {
+    const [kind, kindClass] = PIAZZA_KINDS[x.kind] || PIAZZA_KINDS.post;
+    const detail = h("div", { class: "piazza-thread", hidden: true });
+    const open = h("button", { type: "button", class: "btn plain", "aria-expanded": "false" }, "Read post & replies");
+    let loaded = false;
+    open.addEventListener("click", async () => {
+      if (!loaded) {
+        open.disabled = true;
+        try {
+          const post = await api(`/api/piazza/post?class=${encodeURIComponent(x.classId)}&id=${encodeURIComponent(x.id)}`);
+          const labels = { i_answer: "Instructor answer", s_answer: "Student answer", followup: "Follow-up", feedback: "Reply" };
+          const content = (p) => h("section", { class: "piazza-reply" },
+            labels[p.kind] ? h("h4", {}, labels[p.kind]) : null,
+            p.title ? h("p", { class: "piazza-full-text" }, p.title) : null,
+            p.text ? h("p", { class: "piazza-full-text" }, p.text) : null,
+            p.children.map(content));
+          fill(detail, content(post)); loaded = true;
+        } catch (err) { toast(err.message); return; }
+        finally { open.disabled = false; }
+      }
+      detail.hidden = !detail.hidden;
+      open.setAttribute("aria-expanded", String(!detail.hidden));
+      open.textContent = detail.hidden ? "Read post & replies" : "Hide discussion";
+    });
+    parts.push(h("article", { class: "card piazza-post" + (x.unread ? " unread" : "") },
+      h("div", { class: "piazza-top" }, h("span", { class: "work-course" }, x.course),
+        h("span", { class: `pz-kind k-${kindClass}` }, kind), x.number ? h("span", { class: "muted" }, `@${x.number}`) : null,
+        h("span", { class: "muted" }, x.date ? fmtDateTime(x.date) : "")),
+      h("h3", { class: "piazza-title" }, x.title), x.snippet ? h("p", { class: "piazza-snippet" }, x.snippet) : null,
+      h("div", { class: "piazza-actions" }, open,
+        h("a", { class: "btn plain", href: x.url, target: "_blank", rel: "noopener noreferrer" }, "Open on Piazza ↗")), detail));
+  }
+  if (d.more) parts.push(h("button", { type: "button", class: "btn", disabled: P.loading, onclick: () => loadPiazza(false, false, true) }, "Load older posts"));
+  fill(body, parts);
+}
+
+function renderPiazzaEmails() {
   const body = $("piazza-body"), P = state.piazza, d = P.data;
   if (!d) {
     $("view-sub").textContent = P.error ? "" : "Διαβάζω τα email του Piazza…";
@@ -1692,11 +1831,6 @@ async function loadFeeds() {
 let annReq = 0;
 async function loadAnnouncements(refresh = false) {
   const id = ++annReq;
-  if (!state.feeds.length) {
-    state.feedItems = []; state.feedErrors = []; state.annLoaded = true;
-    mergeAnnouncements();
-    return;
-  }
   const visible = state.view.type === "ann";
   if (visible) {
     $("view-sub").textContent = "Loading…";
@@ -1729,6 +1863,47 @@ function mergeAnnouncements() {
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   renderFeedNav();
   if (state.view.type === "ann") renderAnnouncements();
+}
+
+const topicKeys = { "Προπτυχιακά": "undergraduate", "Πρακτική Άσκηση": "internship" };
+async function loadTopicAnnouncements(category, page = 0, refresh = false) {
+  const key = topicKeys[category];
+  const cacheKey = `${key}:${page}`;
+  state.topicPageByCategory.set(category, page);
+  if (!refresh && state.topicPages.has(cacheKey)) {
+    state.topicError = "";
+    if (state.view.type === "ann" && state.view.cat === category) renderAnnouncements();
+    return;
+  }
+  if (state.topicLoading.has(cacheKey)) return;
+  state.topicLoading.add(cacheKey);
+  state.topicError = "";
+  if (state.view.type === "ann" && state.view.cat === category) renderAnnouncements();
+  try {
+    const result = await api(`/api/announcements?topic=${encodeURIComponent(key)}&page=${page}${refresh ? "&refresh=1" : ""}`);
+    state.topicPages.set(cacheKey, result);
+  } catch (err) {
+    state.topicError = err.message;
+  } finally {
+    state.topicLoading.delete(cacheKey);
+    if (state.view.type === "ann" && state.view.cat === category) renderAnnouncements();
+  }
+}
+
+function renderTopicPager(category, result, page) {
+  if (!result || result.totalPages < 2) return null;
+  const change = (n) => loadTopicAnnouncements(category, n);
+  const start = Math.max(0, Math.min(page - 2, result.totalPages - 5));
+  const end = Math.min(result.totalPages, start + 5);
+  return h("nav", { class: "announcement-pager", "aria-label": "Σελίδες ανακοινώσεων" },
+    h("button", { class: "btn plain", type: "button", disabled: page === 0, onclick: () => change(page - 1) }, "‹ Προηγούμενη"),
+    ...Array.from({ length: end - start }, (_, i) => {
+      const n = start + i;
+      return h("button", { class: "btn plain" + (n === page ? " active" : ""), type: "button",
+        "aria-current": n === page ? "page" : null, onclick: () => change(n) }, String(n + 1));
+    }),
+    h("button", { class: "btn plain", type: "button", disabled: page >= result.totalPages - 1,
+      onclick: () => change(page + 1) }, "Επόμενη ›"));
 }
 
 async function loadEclass(refresh = false) {
@@ -1851,15 +2026,19 @@ function renderAnnouncements() {
   const errors = state.feedErrors.concat(state.eclass.errors);
   $("ann-errors").replaceChildren(...errors.map((e) => h("div", { class: "banner" }, `${e.feed}: ${e.error}`)));
   const inView = (a) => !feed || (feed === "eclass" ? a.eclass : a.sourceId === feed);
-  if (!state.feeds.length && !state.eclass.enabled && !feed) {
+  if (!state.feeds.length && !state.eclass.enabled && !state.announcements.length && !feed) {
     $("view-sub").textContent = "";
     $("ann-list").replaceChildren(h("div", { class: "state" }, icon(ICONS.megaphone),
       h("p", {}, "No announcement sources yet."),
       h("button", { class: "btn primary", onclick: openFeedDialog }, "Add a Source")));
     return;
   }
-  const items = state.announcements.filter((a) => inView(a) && (!cat || a.category === cat)
-    && matches(`${a.title} ${a.summary} ${a.source} ${a.category}`));
+  const topicKey = cat && topicKeys[cat] && state.inst.id === "uoa" ? topicKeys[cat] : "";
+  const topicPage = topicKey ? (state.topicPageByCategory.get(cat) || 0) : 0;
+  const topicResult = topicKey ? state.topicPages.get(`${topicKey}:${topicPage}`) : null;
+  const items = (topicKey ? (topicResult?.items || []) : state.announcements.filter((a) => inView(a)
+    && (!cat || (a.category || "").split(",").map((x) => x.trim()).includes(cat))))
+    .filter((a) => matches(`${a.title} ${a.summary} ${a.source} ${a.category}`));
   const frag = document.createDocumentFragment();
   for (const a of items) {
     const p = h("p", {}, a.summary);
@@ -1885,9 +2064,14 @@ function renderAnnouncements() {
     }
     frag.append(card);
   }
-  if (!items.length) frag.append(h("div", { class: "state" }, state.query ? "No matches" : "Nothing posted yet."));
+  if (!items.length) frag.append(h("div", { class: "state" }, topicKey && state.topicLoading.has(`${topicKey}:${topicPage}`)
+    ? "Loading announcements…" : topicKey && state.topicError ? state.topicError
+      : state.query ? "No matches" : "Nothing posted yet."));
+  if (topicKey && topicResult?.totalPages > 1) frag.append(renderTopicPager(cat, topicResult, topicPage));
   $("ann-list").replaceChildren(frag);
-  $("view-sub").textContent = `${items.length} announcement${items.length === 1 ? "" : "s"}`;
+  $("view-sub").textContent = topicKey && topicResult
+    ? `${items.length} announcements · Page ${topicPage + 1} of ${topicResult.totalPages}`
+    : `${items.length} announcement${items.length === 1 ? "" : "s"}`;
 }
 
 function openFeedDialog() {
@@ -2294,23 +2478,84 @@ function renderSide() {
 }
 
 async function saveAISettings(change) {
-  const next = { ...(ai.settings || { model: "", effort: "" }), ...change };
+  const next = { ...(ai.settings || { provider: "claude", model: "", effort: "" }), ...change };
   try {
     ai.settings = await api("/api/ai/settings", { method: "POST", body: next });
     toast("Οι ρυθμίσεις του AI αποθηκεύτηκαν");
   } catch (err) { toast(err.message); }
-  renderAI();
+  if (!$("player").hidden) renderAI();
+  renderGlobalAISettings();
+  ai.sig = "";
+  if (ai.lid) { clearTimeout(ai.timer); pollAI(); }
 }
 
+// CLI model presets checked against the official provider documentation.
+const AI_PROVIDER_MODELS = {
+  claude: AI_MODELS,
+  chatgpt: [["", "Προεπιλογή CLI"], ["gpt-6.1-sol", "GPT-6.1 Sol"],
+    ["gpt-6.1-terra", "GPT-6.1 Terra"], ["gpt-6-astra", "GPT-6 Astra"],
+    ["gpt-6-luna", "GPT-6 Luna"], ["gpt-6-sol", "GPT-6 Sol"]],
+  gemini: [["", "Προεπιλογή CLI (Auto)"], ["gemini-3-pro-preview", "Gemini 3 Pro · Preview"],
+    ["gemini-3-flash-preview", "Gemini 3 Flash · Preview"],
+    ["gemini-2.5-pro", "Gemini 2.5 Pro"], ["gemini-2.5-flash", "Gemini 2.5 Flash"]],
+  antigravity: [["", "Προεπιλογή Antigravity"], ["gemini-4-argon-high", "Gemini 4 Argon · High"],
+    ["gemini-4-argon-medium", "Gemini 4 Argon · Medium"], ["gemini-3.8-flash-high", "Gemini 3.8 Flash · High"],
+    ["gemini-3.8-flash-medium", "Gemini 3.8 Flash · Medium"], ["gemini-3.1-pro-high", "Gemini 3.1 Pro · High"]],
+};
+
+const AI_PROVIDERS = [["claude", "Claude"], ["gemini", "Gemini"], ["chatgpt", "ChatGPT · Codex CLI"],
+  ["antigravity", "Google Antigravity · agy"]];
+const aiProviderName = (provider) => AI_PROVIDERS.find(([key]) => key === provider)?.[1] || "Claude";
+
 function aiSettingsRow() {
-  const st = ai.settings || { model: "", effort: "" };
+  const st = ai.settings || { provider: "claude", model: "", effort: "" };
   const select = (label, options, key, title) => h("label", { class: "ai-select", title },
     h("span", null, label),
-    h("select", { onchange: (e) => saveAISettings({ [key]: e.target.value }) },
-      options.map(([v, text]) => h("option", { value: v, selected: st[key] === v }, text))));
+    h("select", { onchange: (e) => {
+      const value = e.target.value;
+      if (key === "provider") saveAISettings({ provider: value, ...(st.profiles?.[value] || { model: "", effort: "" }) });
+      else saveAISettings({ [key]: value });
+    } }, options.map(([v, text]) => h("option", { value: v, selected: st[key] === v }, text))));
+  const models = AI_PROVIDER_MODELS[st.provider] || AI_MODELS;
+  const efforts = { claude: AI_EFFORTS, chatgpt: AI_EFFORTS.filter(([v]) => v !== "max"),
+    gemini: [], antigravity: AI_EFFORTS.filter(([v]) => ["", "low", "medium", "high"].includes(v)) };
+  const custom = !models.some(([id]) => id === (st.model || ""));
+  const customInput = h("input", { value: custom ? st.model : "", hidden: !custom,
+    placeholder: "Model ID", "aria-label": "Άλλο μοντέλο AI", maxlength: 120,
+    onchange: (e) => saveAISettings({ model: e.target.value.trim() }) });
+  const modelPicker = h("label", { class: "ai-select" }, h("span", null, "Μοντέλο"),
+    h("select", { "aria-label": "Μοντέλο AI", onchange: (e) => {
+      const isCustom = e.target.value === "__custom__";
+      customInput.hidden = !isCustom;
+      if (isCustom) customInput.focus();
+      else saveAISettings({ model: e.target.value });
+    } }, [...models, ["__custom__", "Άλλο μοντέλο…"]].map(([id, label]) =>
+      h("option", { value: id, selected: custom ? id === "__custom__" : id === (st.model || "") }, label))), customInput);
   return h("div", { class: "ai-settings" },
-    select("Μοντέλο", AI_MODELS, "model", "Ποιο μοντέλο του Claude απαντά (από το πλάνο σου)"),
-    select("Σκέψη", AI_EFFORTS, "effort", "Πόσο σκέφτεται πριν απαντήσει: περισσότερη σκέψη δίνει καλύτερες απαντήσεις, πιο αργά, με περισσότερη χρήση του πλάνου"));
+    select("AI", AI_PROVIDERS, "provider", "Ισχύει σε όλη την εφαρμογή: ενημέρωση, σύνοψη, ερωτήσεις και κάρτες"),
+    modelPicker,
+    efforts[st.provider]?.length ? select("Σκέψη", efforts[st.provider], "effort", "Επίπεδο σκέψης για το επιλεγμένο μοντέλο") : null);
+}
+
+async function openGlobalAISettings() {
+  try { ai.settings = await api("/api/ai/settings"); }
+  catch (err) { toast(err.message); return; }
+  $("ai-settings-dialog").hidden = false;
+  renderGlobalAISettings();
+  $("ai-settings-body").querySelector("select")?.focus();
+}
+
+function renderGlobalAISettings() {
+  const body = $("ai-settings-body");
+  if (!body || $("ai-settings-dialog").hidden) return;
+  const st = ai.settings;
+  body.replaceChildren(aiSettingsRow(),
+    h("p", { class: "muted" }, "Η επιλογή ισχύει για όλες τις νέες ενημερώσεις, συνόψεις, ερωτήσεις και κάρτες. Οι υπάρχουσες απαντήσεις διατηρούνται. Μια εργασία που τρέχει ολοκληρώνεται με το AI που ξεκίνησε."),
+    h("p", { class: "muted" }, "Η πρόσβαση στα μοντέλα εξαρτάται από τον λογαριασμό και την έκδοση του CLI σου. Για GPT-6.1 Terra χρειάζεται Codex CLI 0.159.0 ή νεότερο. Τα μοντέλα Preview μπορεί να αλλάξουν."),
+    h("ul", null, AI_PROVIDERS.map(([key, label]) => h("li", null,
+      `${label}: ${st.providers?.[key]?.installed ? "CLI εγκατεστημένο" : "CLI δεν βρέθηκε"}`))),
+    h("p", { class: "muted" }, "Συνδέσου πρώτα στο τερματικό: claude, gemini, codex login ή agy. Το κείμενο και οι εικόνες των επιλεγμένων πηγών στέλνονται στον πάροχο που διάλεξες, με τον λογαριασμό σου. Η εγκατάσταση του CLI δεν επιβεβαιώνει τη σύνδεση ή την πρόσβαση σε μοντέλα."),
+    h("p", { class: "muted" }, "Υπότιτλοι: παραμένουν Whisper / Groq. Το Google Calendar χρησιμοποιεί σύνδεσμο Claude: για Gemini / ChatGPT χρησιμοποίησε τη λήψη .ics."));
 }
 
 function renderAI() {
@@ -2336,7 +2581,7 @@ function renderSummaryTab() {
   if (!st) return [h("div", { class: "spinner ai-spin" })];
   if (st.status === "unavailable") {
     return [h("p", { class: "ai-note" }, !st.claude
-      ? "Χρειάζεται το Claude Code σε αυτόν τον υπολογιστή, συνδεδεμένο με τον λογαριασμό σου στο Claude (δες το README)."
+      ? "Χρειάζεται το επιλεγμένο AI CLI εγκατεστημένο και συνδεδεμένο (ρυθμίσεις AI στο μενού)."
       : "Χρειάζεται το Whisper για την απομαγνητοφώνηση (δες το README).")];
   }
   if (st.status === "none") {
@@ -2348,7 +2593,7 @@ function renderSummaryTab() {
         : st.groq ? "Απομαγνητοφώνηση από το Groq: τα πρώτα κομμάτια σε λίγα λεπτά."
           : "Χωρίς κλειδί Groq η απομαγνητοφώνηση γίνεται σε αυτόν τον υπολογιστή και αργεί (το πρώτο κομμάτι σε ~15 λεπτά)."),
       groqBox(st.groq),
-      h("p", { class: "ai-note faint" }, "Στο Claude στέλνεται το κείμενο της διάλεξης και λίγες εικόνες από κάθε κομμάτι, μέσω του Claude Code με τον λογαριασμό σου· μετράει στα όρια χρήσης του πλάνου σου. Κάθε σύνοψη φτιάχνεται μία φορά και αποθηκεύεται.")];
+      h("p", { class: "ai-note faint" }, "Στο επιλεγμένο AI στέλνεται το κείμενο της διάλεξης και λίγες εικόνες από κάθε κομμάτι μέσω του CLI του, με τον λογαριασμό σου. Κάθε σύνοψη αποθηκεύεται.")];
   }
   const out = [];
   if (st.status === "running") {
@@ -2366,7 +2611,7 @@ function renderSummaryTab() {
   return out;
 }
 
-const PART_STATES = { transcribe: "Απομαγνητοφώνηση…", queued: "Σε αναμονή για το Claude", writing: "Το Claude το γράφει…" };
+const PART_STATES = { transcribe: "Απομαγνητοφώνηση…", queued: "Σε αναμονή για το AI", writing: "Το AI το γράφει…" };
 
 function updateAIProgress() {
   const st = ai.status, txt = $("ai-progress");
@@ -2472,7 +2717,7 @@ function renderSummary(sum, st) {
   }
   if (st?.status === "done") {
     const model = (sum.model || "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2");
-    out.push(h("p", { class: "ai-note faint" }, `Από το Claude${model ? ` (${model}${sum.effort ? `, σκέψη: ${(AI_EFFORTS.find(([v]) => v === sum.effort) || ["", sum.effort])[1].toLowerCase()}` : ""})` : ""} · ${new Date(sum.created).toLocaleDateString("el-GR")}. Μπορεί να έχει λάθη: έλεγξε στο βίντεο.`));
+    out.push(h("p", { class: "ai-note faint" }, `Από το ${aiProviderName(sum.provider)}${model ? ` (${model}${sum.effort ? `, σκέψη: ${(AI_EFFORTS.find(([v]) => v === sum.effort) || ["", sum.effort])[1].toLowerCase()}` : ""})` : ""} · ${new Date(sum.created).toLocaleDateString("el-GR")}. Μπορεί να έχει λάθη: έλεγξε στο βίντεο.`));
   }
   markAISection();
   return out;
@@ -4312,7 +4557,38 @@ const SIDEBAR_WIDTH = { min: 200, max: 440, default: 250 };
 const readPref = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 const writePref = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 
+const sidebarMobile = () => matchMedia("(max-width: 820px)").matches;
+
+function syncSidebarVisibility() {
+  const app = $("app");
+  const open = sidebarMobile() ? app.classList.contains("nav-open") : !app.classList.contains("sidebar-closed");
+  $("sidebar").inert = !open;
+  $("sidebar").setAttribute("aria-hidden", String(!open));
+  $("menu-btn").setAttribute("aria-expanded", String(open));
+  $("menu-btn").setAttribute("aria-label", open ? "Hide categories" : "Show categories");
+  $("menu-btn").title = open ? "Hide menu" : "Show menu";
+}
+
+function setSidebarOpen(open, persist = true) {
+  if (sidebarMobile()) $("app").classList.toggle("nav-open", open);
+  else {
+    $("app").classList.toggle("sidebar-closed", !open);
+    if (persist) writePref("sidebar:hidden", !open);
+  }
+  if (!open && $("sidebar").contains(document.activeElement)) $("menu-btn").focus();
+  syncSidebarVisibility();
+}
+
+function closeMobileSidebar() {
+  $("app").classList.remove("nav-open");
+  syncSidebarVisibility();
+}
+
 function setupSidebar() {
+  $("app").classList.toggle("sidebar-closed", readPref("sidebar:hidden", false) === true);
+  syncSidebarVisibility();
+  matchMedia("(max-width: 820px)").addEventListener("change", closeMobileSidebar);
+  $("sidebar-close").addEventListener("click", () => setSidebarOpen(false));
   const nav = $("nav-sections");
   const sections = () => [...nav.querySelectorAll(":scope > .nav-section")];
   const saveOrder = () => writePref("sidebar:order", sections().map((s) => s.dataset.section));
@@ -4423,6 +4699,7 @@ function setupSidebar() {
 
 // ---------- wiring ----------
 function init() {
+  initStudentAssistant();
   $("provider").addEventListener("change", applyProvider);
   $("pw-toggle").addEventListener("click", () => {
     setPasswordVisible($("password").type === "password");
@@ -4436,6 +4713,8 @@ function init() {
   });
   $("login-form").addEventListener("submit", onLogin);
   $("logout-btn").addEventListener("click", logout);
+  $("ai-settings-btn").addEventListener("click", openGlobalAISettings);
+  $("ai-settings-close").addEventListener("click", () => { $("ai-settings-dialog").hidden = true; $("ai-settings-btn").focus(); });
   setupSidebar();
   setInterval(() => { if (state.timetable.data && !$("app").hidden) renderEclassNav(); }, 60 * 1000);   // "τώρα" marks
   renderThemeButton();
@@ -4454,8 +4733,11 @@ function init() {
   $("add-feed-btn").addEventListener("click", openFeedDialog);
   $("feed-cancel").addEventListener("click", () => ($("feed-dialog").hidden = true));
   $("feed-form").addEventListener("submit", onAddFeed);
-  $("menu-btn").addEventListener("click", () => $("app").classList.add("nav-open"));
-  $("scrim").addEventListener("click", () => $("app").classList.remove("nav-open"));
+  $("menu-btn").addEventListener("click", () => {
+    const open = $("menu-btn").getAttribute("aria-expanded") === "true";
+    setSidebarOpen(!open);
+  });
+  $("scrim").addEventListener("click", closeMobileSidebar);
   $("more-btn").addEventListener("click", () => { state.page += 1; loadMail({ append: true }); });
   $("refresh-btn").addEventListener("click", () => {
     if (state.view.type === "mail") { state.page = 0; loadMail({ refresh: true }); refreshUnreadCount(); }
@@ -4468,12 +4750,18 @@ function init() {
     else if (state.view.type === "projects") loadProjects(true);
     else if (state.view.type === "study") loadStudy();
     else if (state.view.type === "piazza") loadPiazza(true);
+    else if (state.view.type === "tools") renderTools();
     else if (currentCourse() && activeCourseTab(currentCourse()) !== "ann") {
       const c = currentCourse(), [, tab, dir] = courseTab.view.split("|");
       loadCourseTab(c, tab, dir, true);
     }
     else if (state.view.type === "studies") loadStudies(state.studies.tab, true);
-    else { loadAnnouncements(true); if (state.eclass.enabled) loadEclass(true); }
+    else {
+      loadAnnouncements(true);
+      if (state.view.cat && topicKeys[state.view.cat] && state.inst.id === "uoa")
+        loadTopicAnnouncements(state.view.cat, state.topicPageByCategory.get(state.view.cat) || 0, true);
+      if (state.eclass.enabled) loadEclass(true);
+    }
   });
   $("eclass-refresh").addEventListener("click", () => loadEclass(true));
   $("player-close").addEventListener("click", closePlayer);
@@ -4524,6 +4812,19 @@ function init() {
   });
 
   document.addEventListener("keydown", (e) => {
+    if (!$("ai-settings-dialog").hidden) {
+      if (e.key === "Escape") {
+        $("ai-settings-dialog").hidden = true;
+        $("ai-settings-btn").focus();
+      }
+      if (e.key === "Tab") {
+        const controls = [...$("ai-settings-dialog").querySelectorAll("button, select, input")];
+        const first = controls[0], last = controls[controls.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      return;
+    }
     if (e.key === "Escape") {
       if (!$("viewer").hidden) closeViewer();
       else if (!$("study-dialog").hidden) $("study-dialog").hidden = true;
@@ -4534,7 +4835,7 @@ function init() {
       else if (!$("tt-dialog").hidden) $("tt-dialog").hidden = true;
       else if (!$("compose").hidden) closeCompose();
       else if (!$("feed-dialog").hidden) $("feed-dialog").hidden = true;
-      else $("app").classList.remove("nav-open");
+      else closeMobileSidebar();
       return;
     }
     if ($("app").hidden || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;

@@ -7,6 +7,15 @@ python3 server.py
 ```
 Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard library only).
 
+- **Εργαλεία · Tools**: six subtabs keep related tools together. The selected subtab is remembered for this browser tab; switching categories keeps selected files, text and the running study timer.
+  - **Documents**: Word (.doc/.docx/.odt) → PDF (20 MB; LibreOffice), PDF compression with three quality presets (Ghostscript), and PDF merge/page extraction (Poppler). Merge order can be changed; page selections such as `3, 1-2` preserve your requested order. PDF tools accept up to 50 MB and 300 pages total. Compression can change image quality and invalidates digital signatures.
+  - **Images**: PNG/JPG/WebP conversion, image compression with quality and resizing controls, and images → PDF (up to 20 images / 50 MB, reorderable, one A4 page per image). These run in your browser.
+  - **Archives**: folder → ZIP (up to 200 MB / 2,000 files; empty folders omitted) in your browser; ZIP browsing and individual file extraction on this computer (50 MB archive, 200 MB expanded / 2,000 entries). Unsafe paths, symlinks and encrypted entries are rejected.
+  - **Text**: word/character counter in your browser.
+  - **Study**: a Pomodoro timer with adjustable study/break lengths and pause/resume, plus a weighted grade calculator for the exam score needed to reach a target. Check your course's separate minimum exam requirements.
+  - **Converters**: length, weight, temperature, time, and decimal/binary data sizes.
+  - PDF and ZIP requests use temporary local processing; no third-party conversion service receives files. The app shows missing programs in the relevant tool. On Debian/Ubuntu, optional document tools can be installed with `sudo apt install libreoffice ghostscript poppler-utils`.
+
 - **Mail**: Inbox, Unread and Sent over IMAP. Read, reply, reply all and compose over SMTP.
 - **Announcements**: add any RSS/Atom feed URL, or a school, course or club page that links one. Posts from all sources are merged and sorted by date.
 - **ΕΚΠΑ / DIT preset** (the default): `imaps://imap.uoa.gr:993` and `smtps://smtp.uoa.gr:465`. Sign in with your webmail.uoa.gr username and password. The DIT feed (`https://www.di.uoa.gr/rss.xml`) is added on first run, and its posts are grouped into topics (Ανακοινώσεις, Νέα, Εκδηλώσεις, …).
@@ -32,35 +41,33 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
   ```
   (The first run downloads the model, about 480 MB for `small`.)
   **Faster with Groq (optional, free):** create a key at [console.groq.com/keys](https://console.groq.com/keys) and paste it in the player's *AI καθηγητής* panel. Transcription then runs on Groq's servers with Whisper large, so a two-hour lecture takes a few minutes and the result is more accurate. The lecture's audio is sent to Groq. The free tier has limits of roughly 2 hours of audio per hour and 8 per day. For the hourly limit the app waits up to 20 minutes. When the daily limit is reached, it carries on with Whisper on this computer. The key is saved in `~/.config/student-hub/groq-key`, readable only by you, and is never sent back to the page. `GROQ_API_KEY` in the environment works too.
-- **AI καθηγητής (Claude)**: in the player, *✦ AI καθηγητής* opens a panel with two tabs.
+- **AI καθηγητής (Claude / Gemini / ChatGPT / Antigravity)**: in the player, *✦ AI καθηγητής* opens a panel with two tabs.
   - *Σύνοψη* summarizes the lecture section by section, with timestamps that jump the video. It includes the slides with their text transcribed, key terms, announcements, an overview and what to remember for the exam.
   - The lecture is handled in parts of about 10 minutes. Each part's summary appears as soon as that part has been downloaded, transcribed and written, while the later parts show what they're waiting for. The section that's playing is highlighted.
   - *Ερωτήσεις* is a chat with the instructor about the lecture. Answers stream in, and their times are clickable. Follow-up questions continue the same conversation.
-  - Above the tabs you choose the *Μοντέλο* (Fable, Opus, Sonnet, Haiku, or your account's default) and the *Σκέψη* (how much Claude thinks before answering, from Λίγη to Μέγιστη).
-  - Claude is reached through [Claude Code](https://claude.com/claude-code), signed in with your own Claude plan. Claude Code is run in the background with every tool disabled, so it only reads what it's sent: the transcript, up to 5 frames per part, and your questions. This counts toward your plan's usage limits.
+  - Choose the provider, optional model ID and supported thinking level above the tabs, or use **AI** in the sidebar. These preferences apply app-wide and are remembered per provider.
+  - The selected provider runs through its signed-in CLI: Claude Code, Gemini CLI, OpenAI Codex CLI, or Google Antigravity CLI. It receives the transcript, up to 5 frames per part and your questions. See **Choosing an AI CLI** below for setup and execution details.
   - Summaries, frames and chats are saved in `~/.cache/student-hub/instructor/<lecture>/`. If a summary stops (say, the plan's limit was reached), *Συνέχεια* resumes from the last finished part.
-  - It needs Whisper (above) and Claude Code installed and signed in once (run `claude` and follow the sign-in link).
-- **Σήμερα (briefing)**: when you sign in, Claude reads the last two weeks of your mail, your eClass courses' announcements, the department's news and your open eClass assignments, and tells you what you have to do. This opens as the first page.
+  - It needs Whisper (above) and your selected AI CLI installed and signed in once.
+- **Σήμερα (briefing)**: when you sign in, your selected AI reads the last two weeks of your mail, your eClass courses' announcements, the department's news and your open eClass assignments, and tells you what you have to do. This opens as the first page.
   - It gives a short summary and a to-do list with deadlines, ordered by urgency. Each task has its course and links to the email, announcement or course it came from.
   - Below that come important dates (exams, moved lectures) and other things worth knowing, and the calendar (see *Ημερολόγιο*).
   - Newsletters and ads are ignored. Already submitted assignments aren't listed. The same deadline found in an email and in eClass appears once.
   - Tick tasks off as you do them; ticks are remembered. The sidebar's *Σήμερα* shows how many tasks are open, in red if some are urgent.
-  - On later sign-ins the sources are checked again, but Claude is asked only if something changed, and not again within 20 minutes. ↻ asks again now.
+  - The first sign-in each day generates a new briefing (Europe/Athens time). Later sign-ins that day reuse it, even if sources or the selected AI change. ↻ manually generates a new briefing whenever you need one.
   - Mail stays unread. The model and thinking level are the ones chosen in the *AI καθηγητής* panel.
-  - It uses Claude Code with your own plan, like the AI instructor: the emails and announcements are sent to Claude. The briefing is saved in `~/.cache/student-hub/briefing/`, readable only by you.
-- **Piazza**: your courses' Piazza posts, read from the notification emails Piazza sends.
-  - Each post shows its course, its kind (*Ερώτηση*, *Σημείωση*, *Σημείωση διδάσκοντα*, *Απάντηση*, or a digest with its list of posts), title and preview.
-  - **Άνοιγμα της ανάρτησης ↗** opens the post on piazza.com; *Το email* opens the original email in the app.
-  - Filter by course, or open a course's Piazza page (↗). The sidebar shows how many are unread.
-  - Piazza has no public API for students, and its private one isn't used, so turn on email notifications in Piazza (*Account / Email Settings*: "Real time" or "Smart digest" for each class) to the address you use here.
-  - Piazza emails are left unread.
+  - It uses your selected AI CLI, like the AI instructor: the emails and announcements are sent to that provider. The briefing is saved in `~/.cache/student-hub/briefing/`, readable only by you.
+- **Piazza**: connect your separate Piazza account in the tab to browse the actual course feed, sorted by latest activity. Select a course, load older posts, and open full posts, instructor/student answers and follow-up discussions inside Student Hub. Search filters the posts already loaded.
+  - The Piazza password is used only for sign-in and is never saved. Connection cookies and the short-lived feed cache stay in the current Student Hub session; disconnect or sign out to clear them.
+  - Direct feeds use Piazza's unofficial web endpoints, so changes to Piazza may require an update. Accounts requiring a separate SSO or MFA flow may need to open Piazza directly.
+  - **Email notifications** remains a separate view for accounts with mail access. It reads notification emails without marking them read; it is independent of the course feed.
 - **Ημερολόγιο (calendar)**: at the bottom of *Σήμερα*, choose what goes into your calendar: open eClass assignment deadlines, the to-dos and important dates from the briefing, and your weekly timetable (repeating until the end of the semester).
   - **⬇ Λήψη .ics** downloads an iCalendar file. Import it into Google Calendar (*Settings → Import & export*), your phone or Thunderbird. Deadlines come with reminders a day and 3 hours before.
   - **Ενημέρωση Google Calendar:** Claude adds the events to your Google Calendar through the *Google Calendar connector of your Claude account*. Connect it once at [claude.ai → Settings → Connectors](https://claude.ai/settings/connectors); Student Hub never sees a Google password or key.
     - Claude gets only the list of events built by the app (never your emails), only the calendar tools, and none that deletes.
     - Events carry a `student-hub:<id>` line, so nothing is added twice and changed deadlines are updated.
   - With *Αυτόματα μετά από κάθε ενημέρωση* on, every new briefing also adds its new deadlines, to-dos and dates to Google Calendar.
-- **Μελέτη (exam study mode)**: flashcards for each course, written by Claude.
+- **Μελέτη (exam study mode)**: flashcards for each course, written by your selected AI.
   - **Making a deck:** *＋ Νέα τράπουλα* lets you choose a course and the sources:
     - the course's lectures with an AI instructor summary or subtitles, from every academic year;
     - files from all the folders of its eClass *Έγγραφα* (PDF, Word, PowerPoint, text; read on this computer);
@@ -70,7 +77,7 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
   - **Where they came from:** each deck lists the lectures, files and notes its cards were made from, with how many cards each gave, plus any file that couldn't be read and why (for example a scanned PDF). Each card shows its own source too: the lecture at the minute it's taught, or the document.
   - *＋ Κάρτες* adds more cards without repeating existing ones, and a wrong card can be deleted.
   - **Studying:** see the question, flip the card (Space) to see the answer, then *Επόμενη* (→) through the deck.
-  - **Saved where:** decks are kept in `~/.local/share/student-hub/study/`. Making cards uses your Claude plan, like the AI instructor; studying doesn't.
+  - **Saved where:** decks are kept in `~/.local/share/student-hub/study/`. Making cards uses your selected AI CLI account, like the AI instructor; studying doesn't.
 - **Projects (GitHub)**: a GitHub repository for each assignment, tracked in the app.
   - **Creating a project:** press **Project** next to an assignment (in a course's *Εργασίες* tab or in *Προθεσμίες*), or **＋ Νέο project** on the *Projects* page.
     - The app suggests a repo name from the course and the assignment, transliterating Greek to Latin.
@@ -105,3 +112,99 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
 - Session cookie: HttpOnly and SameSite=Strict. State-changing requests also need a CSRF token. Failed sign-ins are rate-limited.
 - Email HTML is shown in a sandboxed iframe with a strict CSP: no scripts and no remote images or tracking pixels. All other content is inserted as text.
 - Feeds: http(s) only, a 3 MB limit, DTDs/entities rejected, and HTML stripped to text.
+
+## Choosing an AI CLI
+
+Use **AI** beside the theme/sign-out controls to choose **Claude**, **Gemini**,
+**ChatGPT (Codex CLI)**, or **Google Antigravity** for the whole app. The same controls appear in the lecture
+AI panel. This choice applies to new daily briefings, lecture summaries, lecture
+questions and flashcard generation, for both universities. Existing saved results
+stay available; regenerate them to use a different provider. Running jobs keep the
+provider they started with. Lecture questions preserve their conversation when
+switching providers.
+
+Install your chosen CLI and sign in from a terminal before using it:
+
+| App choice | CLI | Initial sign-in |
+| --- | --- | --- |
+| Claude | Claude Code (`claude`) | Run `claude` and follow sign-in |
+| Gemini | Gemini CLI (`gemini`) | Run `gemini` and follow sign-in |
+| ChatGPT | OpenAI Codex CLI (`codex`) | Run `codex login` and choose ChatGPT |
+| Google Antigravity | Antigravity CLI (`agy`) | Install the native CLI for your OS/CPU, run `agy`, and complete sign-in |
+
+Antigravity publishes native CLI builds for macOS, Linux and Windows, including
+Intel/AMD and ARM variants where listed by Google. Use the [official installer
+instructions](https://antigravity.google/docs/cli/install) so it selects the build
+for your computer. The app finds `agy` on `PATH`, in the official `~/.local/bin`
+location on macOS/Linux, or in the official `%LOCALAPPDATA%\\agy\\bin` location
+on Windows. If Student Hub runs as a background service with a different `PATH`,
+set `STUDENT_HUB_AGY` to the full executable path. An incompatible executable is
+reported as a CPU/build error rather than a generic AI failure.
+
+The app uses these CLIs, not an API integration. Your CLI account must have access
+to the requested model; CLI installation alone does not verify login or account
+access. Choose a preset from **Model** (ChatGPT: GPT-6.1 Sol, GPT-6.1 Terra,
+GPT-6 Astra, GPT-6 Luna, GPT-6 Sol; Gemini: Gemini 3 Pro/Flash Preview,
+Gemini 2.5 Pro/Flash; Antigravity: Gemini 4 Argon High/Medium, Gemini 3.8 Flash
+High/Medium, Gemini 3.1 Pro High), keep the CLI default, or choose **Other model** and enter
+an exact model ID your CLI supports. Availability depends on your account and CLI
+version; GPT-6.1 Terra requires Codex CLI 0.159.0 or newer. Model and thinking preferences are saved separately per provider.
+Gemini uses its model's default thinking behavior; Claude and Codex expose thinking
+levels. Antigravity exposes the CLI's low, medium, and high effort choices. A model
+can reject a level it does not support.
+
+Text and lecture images are sent to the selected provider under your CLI account.
+Codex runs with a private temporary working directory, a read-only sandbox,
+ephemeral sessions, shell tools and user-config integrations disabled. Gemini runs
+headlessly with built-in tools, extensions and MCP integrations disabled; lecture
+images are attached using explicit file references. Antigravity runs in its CLI
+sandbox, receives only the supplied context and explicit image paths, and can
+return schema-constrained JSON for app features that require structured results.
+Gemini/Codex/Antigravity answers appear
+when each CLI request finishes. Claude retains its incremental text streaming.
+Temporary image/schema files are removed after the request. Existing saved app
+results continue to use the locations described above.
+
+**Integration limits:** speech recognition still uses local Whisper or the optional
+Groq transcription service. Automatic Google Calendar sync requires Claude's
+Google Calendar connector; with another provider selected, use **Download .ics**
+and import it into your calendar. The app never silently switches back to Claude.
+
+CLI interface references: [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+[Gemini headless mode](https://geminicli.com/docs/cli/headless/),
+[Antigravity headless mode](https://antigravity.google/docs/cli/headless/),
+[Antigravity installation and sign-in](https://antigravity.google/docs/cli/install), and
+[Antigravity CLI permissions](https://antigravity.google/docs/cli-permissions).
+
+## AI assistant side panel
+
+**✦ Βοηθός AI** in the top toolbar opens a right panel beside the current view
+(on smaller screens it slides over the page). Ask for an update on your obligations,
+find study material, or ask about a document. It uses the configured Claude/Gemini/ChatGPT/Antigravity CLI
+selected in the existing AI settings. Nothing is sent just by opening the panel;
+sending a question lets that provider retrieve relevant connected student data.
+
+The assistant can retrieve mail and attachments without marking messages read,
+department/eClass announcements, assignments, course information, grades, timetable,
+calendar events, tracked project metadata, flashcards, Piazza feeds/posts and saved
+lecture summaries/subtitles. It reads data through Student Hub; it cannot send mail,
+change remote records, run arbitrary commands or browse arbitrary local folders.
+DitLab must first be connected in its existing tab.
+
+For **eClass and DitLab documents**, it can list folders and search filenames through
+all nested levels, then read text from matching PDF, Office, text and code documents.
+Traversal uses a queue with cycle detection and continuation cursors, with no depth
+cutoff. The existing eClass study-source browser also no longer stops silently at
+80 folders. A search request processes at most 60 folders / 60 matches at a time;
+the assistant can continue with the returned cursor. Filename search does not search
+inside every file automatically. Document text is read in 22,000-character chunks;
+files over 25 MB, scanned PDFs without text and unsupported formats are reported as
+unread rather than treated as checked. PDF/Office text uses the existing optional
+Poppler/LibreOffice tools.
+
+Answers include source buttons for documents and app views, plus an activity list.
+A question allows up to ten retrieval rounds; incomplete searches and errors must
+be disclosed. **Stop** cancels the current request; **New conversation** clears its
+history, file references and cached document text. Assistant history stays in the
+current session's memory and is cleared on sign-out/expiry. The selected provider
+receives the question, recent conversation and retrieved material through its CLI.
