@@ -305,8 +305,7 @@ async function loadSetup(tls = false) {
       h("span", { class: "mark", "aria-hidden": "true" }, r.ok ? "✓" : r.required ? "✕" : "–"),
       h("span", {}, h("b", {}, r.name), " ", h("small", { class: "muted" }, r.detail),
         r.fix ? h("code", { title: "Αντιγραφή", onclick: () => copyText(r.fix).then(() => toast("Αντιγράφηκε")) }, r.fix) : null)))))));
-  $("setup-hint").textContent = data.docker ? "Τρέχει σε Docker: τα προγράμματα είναι μέσα στο container."
-    : `Για να εγκαταστήσεις ό,τι λείπει: ${data.windows ? "δεξί κλικ στο install-windows.ps1 → Run with PowerShell" : "./install-linux.sh"} στον φάκελο του Student Hub, μετά επανεκκίνηση.`;
+  $("setup-hint").textContent = `Για να εγκαταστήσεις ό,τι λείπει: ${data.windows ? "διπλό κλικ στο install.bat" : "./install.sh"} στον φάκελο του Student Hub, μετά άνοιξε ξανά την εφαρμογή.`;
 }
 
 async function onLogin(e) {

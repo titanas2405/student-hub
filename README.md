@@ -4,65 +4,28 @@ Your university email, eClass and department announcements in one place, for Ε�
 
 ## Install
 
-Run the installer once from the Student Hub folder, **before you sign in**. It installs what the app uses, asks
-before each optional part (Projects, Word/PDF tools, an AI CLI, Whisper), lets you sign in to the AI CLI and GitHub,
-adds a *Student Hub* shortcut and ends with the setup check.
-
-| | Install | Start |
+| | Install (once) | Start |
 |---|---|---|
-| **Windows** | double-click `install-windows.bat` | the *Student Hub* desktop shortcut, or `start-windows.bat` |
-| **Linux** (apt, dnf, pacman, zypper) | `./install-linux.sh` (`--yes` = recommended parts, no questions) | *Student Hub* in the applications menu, or `./start-linux.sh` |
-| **macOS / anything else** | Python 3.9+, then the optional programs from the setup check | `python3 server.py` |
+| **Windows** | double-click **`install.bat`** | the **Student Hub** icon on the desktop (or `start.bat`) |
+| **Linux** | `./install.sh` | **Student Hub** in the applications menu or on the desktop (or `./start.sh`) |
 
-Then open http://127.0.0.1:8765. The app itself needs only Python 3.9+ (standard library); everything else enables
-optional features. The sign-in page has a **setup check** that shows what is installed, what each missing part is
-for and the command to add it; `python3 server.py --check` prints the same in a terminal.
+The installer asks no questions. It installs everything Student Hub uses: Python (if missing), Git and the GitHub
+CLI, LibreOffice, the PDF tools, Claude Code, ChatGPT Codex, Gemini and Whisper, plus `truststore` on Windows (so the
+university servers' certificates are accepted). It then runs the setup check, adds the Student Hub start icon, opens
+Claude so you can sign in once, and starts the app at http://127.0.0.1:8765. Keep the app's window open while you use
+it. If Windows asks for permission while installing, click **Yes**. A log is saved in `install-log.txt`.
 
-### Docker: everything in one container
+On macOS: install Python 3.9+ and run `python3 server.py`. The sign-in page shows a **setup check** with what is
+installed and what is missing; `python3 server.py --check` prints the same. Ghostscript (PDF compression only) is not
+in winget, so on Windows download it from ghostscript.com if you want it.
 
-Docker downloads and sets up everything inside a container, the same way on Windows, macOS and Linux, on
-**linux/amd64 and linux/arm64** (Intel/AMD PCs, Apple Silicon, ARM laptops, Raspberry Pi 4/5): Python, LibreOffice,
-Ghostscript, Poppler, git, gh, Whisper and the Claude Code, ChatGPT Codex and Gemini CLIs (about 2.5 GB; the first
-build takes 10-20 minutes).
+**Certificate errors on Windows** (*SSLCertVerificationError* for imap.uoa.gr): run `install.bat` (it adds
+`truststore`). Without it, Student Hub asks Windows to check the server once, which downloads the missing root
+certificate, and tries again. If it still fails, the message says why: usually antivirus "scan encrypted connections /
+mail shield", or a wrong date/time. Certificate checks are never turned off.
 
-| | Start | Sign in once (AI CLIs, GitHub) |
-|---|---|---|
-| **Windows** | double-click `docker-start.bat` (installs Docker Desktop with winget if it's missing) | `docker-signin.bat` |
-| **Linux / macOS** | `./docker-start.sh` | `./docker-signin.sh` |
-
-Then open http://127.0.0.1:8765. The container keeps running in the background; stop it with `docker compose down`.
-Settings, logins and the Whisper model are kept in the `student-hub-home` volume; project folders are in
-`./projects` (or set `STUDENT_HUB_PROJECTS` to another folder). To build a smaller image, change the build options in
-`docker-compose.yml` (`WITH_WHISPER: "0"`, `AI_CLI: claude`, `WITH_LIBREOFFICE: "0"`).
-
-What works differently in Docker: *Open in IDE* can't start an editor on your computer (open the project folder
-yourself), the assistant's project commands run in the container's Linux rather than on your system, Whisper can't
-use the GPU, and the app must stay on port 8765 on both sides (it checks the address it is opened at). Docker Desktop on Windows needs
-WSL 2 (it sets it up, with a restart) and virtualization enabled in the BIOS.
-
-### Windows
-
-1. Install Python 3.9 or newer from python.org and tick **Add python.exe to PATH** in the installer.
-2. Double-click **`start-windows.bat`** in the project folder. It checks the setup, starts Student Hub in UTF-8 mode
-   (so Greek text works with every AI CLI and file) and opens http://127.0.0.1:8765. Keep its window open while you
-   use the app.
-3. Optional programs, each enabling more features. The check lists what's missing and how to install it:
-   `winget install Git.Git GitHub.cli` (Projects; then `gh auth login`), `winget install TheDocumentFoundation.LibreOffice`
-   (Word → PDF), Ghostscript (PDF compression) and Poppler (PDF merge/split/text), and an AI CLI, which needs Node.js
-   (`winget install OpenJS.NodeJS.LTS`): `npm install -g @anthropic-ai/claude-code`, `@google/gemini-cli` or `@openai/codex`,
-   then sign in once in a terminal. Claude Code's own installer (`irm https://claude.ai/install.ps1 | iex`) also works; Student Hub finds `%USERPROFILE%\.local\bin\claude.exe` and npm's `%APPDATA%\npm\*.cmd` even when they aren't on PATH. LibreOffice and Ghostscript are found in `Program Files` even if they aren't on PATH.
-
-**Certificate errors on Windows** (e.g. *SSLCertVerificationError* for imap.uoa.gr): Python reads the Windows
-certificate store, and Windows only downloads a root certificate the first time Windows itself needs it, so Greek
-academic (HARICA) servers can be rejected. `start-windows.bat` installs `truststore`, which makes Python use Windows'
-own certificate checks; without it, Student Hub asks Windows to check the server once (which fetches the root) and
-retries. If it still fails, the message says why: antivirus "scan encrypted connections / mail shield" replacing
-certificates, or a wrong date/time. Certificate checks are never turned off.
-
-To check the setup any time: `py -3 server.py --check` (or `python3 server.py --check` on macOS/Linux). Settings and cached
-files are stored under `%APPDATA%\student-hub` and `%LOCALAPPDATA%\student-hub`.
-Google Antigravity, Gemini and other AI CLIs must be installed and signed in on
-Windows separately; see **Choosing an AI CLI** below.
+Settings and caches are stored in `%APPDATA%\student-hub` and `%LOCALAPPDATA%\student-hub` on Windows, and in
+`~/.config/student-hub`, `~/.cache/student-hub` and `~/.local/share/student-hub` on Linux.
 
 - **Εργαλεία · Tools**: seven subtabs keep related tools together. The selected subtab is remembered for this browser tab; switching categories keeps selected files, text and the running study timer.
   - **Documents**: Word (.doc/.docx/.odt) → PDF (20 MB; LibreOffice), PDF compression with three quality presets (Ghostscript), and PDF merge/page extraction (Poppler). Merge order can be changed; page selections such as `3, 1-2` preserve your requested order. PDF tools accept up to 50 MB and 300 pages total. Compression can change image quality and invalidates digital signatures.

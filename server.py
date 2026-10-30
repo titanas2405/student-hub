@@ -50,8 +50,7 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOST = os.environ.get("STUDENT_HUB_LISTEN", "127.0.0.1")   # Docker listens on all of the container's addresses
-IN_DOCKER = os.environ.get("STUDENT_HUB_DOCKER") == "1"
+HOST = "127.0.0.1"
 PORT = int(os.environ.get("STUDENT_HUB_PORT", "8765"))
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -6187,7 +6186,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_get_setup(self, q):
         """The setup check for the sign-in page (no session needed: only this computer can reach the app)."""
         rows, ai_any = setup_report(check_port=False, check_tls=(q.get("tls") or ["0"])[0] == "1")
-        self._json(200, {"rows": rows, "ai": ai_any, "windows": os.name == "nt", "docker": IN_DOCKER})
+        self._json(200, {"rows": rows, "ai": ai_any, "windows": os.name == "nt"})
 
     def api_get_assistant(self, q):
         self._json(200, self._student_assistant(self._session()).status())
@@ -6784,34 +6783,27 @@ def setup_report(check_port=True, check_tls=True):
                 row(True, "port", f"{PORT} is free", required=True)
             except OSError:
                 row(False, "port", f"{PORT} is in use (Student Hub already running?)", "close it, or set STUDENT_HUB_PORT=8766", True)
-    installer = "run install-windows.ps1" if win else "run ./install-linux.sh"
-    npm = {"claude": "irm https://claude.ai/install.ps1 | iex" if win else "curl -fsSL https://claude.ai/install.sh | bash",
-           "gemini": "npm install -g @google/gemini-cli", "chatgpt": "npm install -g @openai/codex",
-           "antigravity": "see 'Choosing an AI CLI' in the README"}
+    installer = "double-click install.bat" if win else "run ./install.sh"
     ai_any = False
     for key, (label, _) in ai_cli.PROVIDERS.items():
         found = ai_available(key)
         ai_any |= found
         row(found, label, ai_cli.binary(key) if found else "not found (assistant and AI tools)",
-            npm[key] + (" (needs Node.js: winget install OpenJS.NodeJS.LTS)" if win and key in ("gemini", "chatgpt") else "")
-            + ", then sign in once in a terminal", area="ai")
-    row(bool(GIT), "git", GIT or "not found (Projects)", "winget install Git.Git" if win else installer, area="projects")
-    row(bool(GH), "GitHub CLI", GH or "not found (Projects)",
-        ("winget install GitHub.cli" if win else installer) + ", then: gh auth login", area="projects")
-    row(bool(SOFFICE), "LibreOffice", SOFFICE or "not found (Word -> PDF, Office previews)",
-        "winget install TheDocumentFoundation.LibreOffice" if win else installer, area="documents")
+            "see 'Choosing an AI CLI' in the README" if key == "antigravity" else installer, area="ai")
+    row(bool(GIT), "git", GIT or "not found (Projects)", installer, area="projects")
+    row(bool(GH), "GitHub CLI", GH or "not found (Projects)", installer + ", then: gh auth login", area="projects")
+    row(bool(SOFFICE), "LibreOffice", SOFFICE or "not found (Word -> PDF, Office previews)", installer, area="documents")
     gs = student_tools.ghostscript()
     row(bool(gs), "Ghostscript", gs or "not found (PDF compression)",
-        "install it from ghostscript.com" if win else installer, area="documents")
+        "download it from ghostscript.com/releases/gsdnld.html" if win else installer, area="documents")
     poppler = student_tools.find_program("pdfinfo")
-    row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)",
-        "download Poppler for Windows and add its Library\\bin folder to PATH" if win else installer, area="documents")
+    row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)", installer, area="documents")
     row(WHISPER_PY.exists(), "Whisper", str(WHISPER_PY) if WHISPER_PY.exists() else "not installed (local lecture subtitles; a Groq key also works)",
-        installer + " and choose Whisper", area="lectures")
+        installer, area="lectures")
     if win:
         row(TLS_KIND == "truststore", "Certificate checks",
             "Windows' own (truststore)" if TLS_KIND == "truststore" else "Python's (reads the Windows store)",
-            "py -3 -m pip install --user truststore (avoids certificate errors with university servers)", area="network")
+            installer + " (avoids certificate errors with the university servers)", area="network")
     if check_tls:
         for host, port in tls_hosts():
             ok, detail = tls_probe(host, port)

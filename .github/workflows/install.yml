@@ -1,100 +1,67 @@
 name: Install
 
-# The installers and the Docker image, tested on real machines (they need the internet and package managers).
+# Runs the real installers on fresh Windows and Linux machines and checks what they installed.
 on:
   push:
     paths:
-      - "install-*"
-      - "start-*"
-      - "Dockerfile"
-      - "docker-compose.yml"
-      - ".dockerignore"
-      - "docker-*"
+      - "install.*"
+      - "start.*"
       - "server.py"
+      - "student_tools.py"
+      - "ai_cli.py"
       - ".github/workflows/install.yml"
   workflow_dispatch:
 
 jobs:
-  linux-installer:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run install-linux.sh --yes
-        run: ./install-linux.sh --yes
-      - name: Everything it should have installed is there
+      - name: ./install.sh
+        run: ./install.sh
+      - name: Everything is installed
         run: |
-          for program in git gh soffice gs pdfinfo; do command -v "$program"; done
-          test -x "$HOME/.local/bin/claude"
-          test -x start-linux.sh
+          export PATH="$HOME/.local/bin:$PATH"
+          for program in git gh soffice gs pdfinfo claude codex gemini; do command -v "$program"; done
+          test -x "$HOME/.local/share/student-hub/whisper/bin/python"
           test -f "$HOME/.local/share/applications/student-hub.desktop"
           python3 server.py --check
 
-  windows-installer:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: install-windows.ps1 parses in Windows PowerShell 5.1 and PowerShell 7
-        shell: pwsh
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install-windows.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) { $errors; exit 1 }
-          powershell -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$PWD\install-windows.ps1', [ref]`$null, [ref]`$e); if (`$e) { `$e; exit 1 }"
-          if ($LASTEXITCODE) { exit 1 }
-      - name: Run install-windows.ps1 for real in Windows PowerShell 5.1
+      - name: Double-click install.bat
         shell: cmd
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File install-windows.ps1 -NoSignIn
-      - name: Everything it should have installed is there
+        run: install.bat
+      - name: Everything is installed
         shell: pwsh
         run: |
-          Get-Content install-log.txt -Tail 40
-          py -3 -c "import truststore; print('truststore', truststore.__version__)"
-          if (-not (Test-Path "$env:USERPROFILE\.local\bin\claude.exe")) { 'claude.exe missing'; exit 1 }
-          if (-not (Test-Path ([Environment]::GetFolderPath('Desktop') + '\Student Hub.lnk'))) { 'desktop shortcut missing'; exit 1 }
-          if (Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue) {
-            if (-not (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe")) { 'LibreOffice missing although winget exists'; exit 1 }
-          } else { 'winget is not on this runner: the winget installs were not exercised' }
-          # A new process: the app must find Poppler even without the updated PATH.
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          py -3 -c "import truststore"
+          if ($LASTEXITCODE) { 'truststore missing'; exit 1 }
+          $need = @{
+            'Claude' = "$env:USERPROFILE\.local\bin\claude.exe"
+            'LibreOffice' = "$env:ProgramFiles\LibreOffice\program\soffice.exe"
+            'Codex' = "$env:APPDATA\npm\codex.cmd"
+            'Gemini' = "$env:APPDATA\npm\gemini.cmd"
+            'Whisper' = "$env:LOCALAPPDATA\student-hub\whisper\Scripts\python.exe"
+            'Start icon' = [Environment]::GetFolderPath('Desktop') + '\Student Hub.lnk'
+          }
+          foreach ($name in $need.Keys) { if (-not (Test-Path $need[$name])) { "$name missing: $($need[$name])"; exit 1 } }
           $out = py -3 server.py --check | Out-String
           $code = $LASTEXITCODE
           $out
           if ($code) { exit 1 }
-          if ($out -notmatch '\[OK\] Poppler') { 'Poppler not found by the app'; exit 1 }
-      - name: Batch files have Windows line endings
+          foreach ($name in 'Claude', 'Gemini', 'ChatGPT \(Codex CLI\)', 'git', 'GitHub CLI', 'LibreOffice', 'Poppler', 'Whisper', 'Certificate checks') {
+            if ($out -notmatch "\[OK\] $name") { "$name not found by the app"; exit 1 }
+          }
+      - name: start.bat starts the app
         shell: pwsh
         run: |
-          foreach ($f in 'install-windows.bat', 'start-windows.bat', 'install-windows.ps1', 'docker-start.bat', 'docker-signin.bat') {
-            $bytes = [IO.File]::ReadAllBytes("$PWD\$f")
-            $lf = ($bytes | Where-Object { $_ -eq 10 }).Count; $crlf = 0
-            for ($i = 1; $i -lt $bytes.Length; $i++) { if ($bytes[$i] -eq 10 -and $bytes[$i - 1] -eq 13) { $crlf++ } }
-            if ($lf -ne $crlf) { "$f has Unix line endings"; exit 1 }
+          $p = Start-Process cmd -ArgumentList '/c', 'start.bat' -PassThru -WindowStyle Hidden
+          for ($i = 0; $i -lt 30; $i++) {
+            try { if ((Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) { 'Student Hub is running'; exit 0 } } catch {}
+            Start-Sleep 1
           }
-
-  docker:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [linux/amd64, linux/arm64]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - name: Build for ${{ matrix.platform }}
-        run: docker buildx build --platform ${{ matrix.platform }} --load -t student-hub:ci .
-      - name: The app starts in the container and finds its tools
-        run: |
-          docker run -d --name hub --platform ${{ matrix.platform }} -p 127.0.0.1:8765:8765 student-hub:ci
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break; sleep 2; done
-          curl -fsS http://127.0.0.1:8765/api/setup | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)
-          ok = {r['name']: r['ok'] for r in d['rows']}
-          print(ok)
-          assert d['docker'], 'not running as the Docker build'
-          for name in ('Python', 'git', 'GitHub CLI', 'LibreOffice', 'Ghostscript', 'Poppler', 'Claude', 'ChatGPT (Codex CLI)', 'Gemini', 'Whisper'):
-              assert ok.get(name), name + ' missing in the image'
-          "
-          docker exec hub /opt/whisper/bin/python -c "import faster_whisper, av, numpy"
-          docker exec hub python server.py --check || true
-          docker logs hub
+          'Student Hub did not start'; exit 1
