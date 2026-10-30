@@ -1,10 +1,58 @@
 "use strict";
 
-const studentAssistant = { data: null, timer: 0, request: 0, signature: "" };
+const studentAssistant = { data: null, timer: 0, request: 0, signature: "",
+  access: { project: "", read: false, write: false, delete: false, run: false }, accessLoaded: false, defaultTypes: "" };
 const ASSISTANT_TOOLS = { overview: "Επισκόπηση", courses: "Μαθήματα", course: "Στοιχεία μαθήματος", deadlines: "Προθεσμίες",
   news: "Ανακοινώσεις", folder: "Άνοιγμα φακέλου", search_files: "Αναζήτηση σε υποφακέλους", document: "Ανάγνωση εγγράφου",
   mail_search: "Αναζήτηση email", mail_read: "Ανάγνωση email", grades: "Βαθμολογίες", timetable: "Πρόγραμμα",
-  calendar: "Ημερολόγιο", projects: "Projects", study: "Κάρτες μελέτης", lectures: "Βιντεοδιαλέξεις", lecture: "Κείμενο διάλεξης", piazza: "Piazza" };
+  calendar: "Ημερολόγιο", projects: "Projects", study: "Κάρτες μελέτης", lectures: "Βιντεοδιαλέξεις", lecture: "Κείμενο διάλεξης", piazza: "Piazza",
+  project_files: "Αρχεία project", project_read: "Ανάγνωση αρχείου", project_write: "Εγγραφή αρχείου", project_delete: "Διαγραφή αρχείου", project_run: "Εντολή" };
+const assistantTool = (entry) => {
+  const [tool, ...rest] = String(entry).split(": ");
+  return (ASSISTANT_TOOLS[tool] || tool) + (rest.length ? ": " + rest.join(": ") : "");
+};
+
+// Read/write/delete/command access to one project: only offered in the Projects tab, off until switched on.
+function assistantAccessActive() {
+  const a = studentAssistant.access;
+  return state.view.type === "projects" && !!a.project && ["read", "write", "delete", "run"].some((p) => a[p]);
+}
+
+async function loadAssistantAccess() {
+  try {
+    const data = await api("/api/assistant/access");
+    studentAssistant.accessLoaded = true;
+    studentAssistant.defaultTypes = data.defaultTypes;
+    const local = data.projects.filter((p) => p.local);
+    fill($("assistant-project"), local.length ? local.map((p) => h("option", { value: p.id }, p.name))
+      : h("option", { value: "" }, "Κανένα project σε αυτόν τον υπολογιστή"));
+    if (!local.some((p) => p.id === studentAssistant.access.project)) studentAssistant.access.project = local[0]?.id || "";
+    $("assistant-project").value = studentAssistant.access.project;
+    $("assistant-types").value = data.types;
+    $("assistant-args").value = data.args;
+  } catch (err) { $("assistant-access-status").textContent = err.message; }
+  renderAssistantAccess();
+}
+
+function renderAssistantAccess() {
+  const panel = $("assistant-access");
+  if (!panel) return;
+  const show = state.view.type === "projects";
+  panel.hidden = !show;
+  if (!show) return;
+  if (!studentAssistant.accessLoaded) { studentAssistant.accessLoaded = true; loadAssistantAccess(); return; }
+  const a = studentAssistant.access;
+  for (const button of panel.querySelectorAll("[data-perm]")) {
+    button.setAttribute("aria-pressed", String(!!a[button.dataset.perm]));
+    button.disabled = !a.project;
+  }
+  const on = ["read", "write", "delete", "run"].filter((p) => a[p]);
+  $("assistant-access-note").textContent = !a.project ? "Δημιούργησε ή άνοιξε ένα project για να δώσεις πρόσβαση."
+    : !on.length ? "Το AI δεν έχει πρόσβαση στο project. Πάτησε ό,τι επιτρέπεις."
+    : (a.delete || a.run ? "Προσοχή: " : "") + "Το AI μπορεί να " + [a.read && "διαβάζει", a.write && "γράφει", a.delete && "διαγράφει", a.run && "τρέχει εντολές"].filter(Boolean).join(", ") +
+      " μόνο σε αυτό το project. Κάθε αλλαγή φαίνεται στην απάντηση και κρατιέται αντίγραφο ασφαλείας." +
+      (a.run ? " Οι εντολές τρέχουν με τα δικαιώματά σου." : "");
+}
 
 function resetStudentAssistant() {
   clearTimeout(studentAssistant.timer);
@@ -17,6 +65,8 @@ function resetStudentAssistant() {
   $("assistant-messages").replaceChildren();
   $("assistant-status").textContent = "";
   $("assistant-question").value = "";
+  Object.assign(studentAssistant.access, { project: "", read: false, write: false, delete: false, run: false });
+  studentAssistant.accessLoaded = false;
 }
 
 function toggleStudentAssistant(open = $("student-assistant").hidden) {
@@ -113,12 +163,12 @@ function renderStudentAssistant() {
     if (nearBottom || data.messages.at(-1)?.role === "user") list.scrollTop = list.scrollHeight;
   }
   fill($("assistant-status"), data.busy ? h("span", { class: "spinner" }) : null,
-    data.error || (data.busy ? (ASSISTANT_TOOLS[data.activity?.at(-1)] || "Σκέφτομαι…") : data.messages.length ? "Έτοιμο" : "Κάνε μια ερώτηση για να ξεκινήσουμε."));
+    data.error || (data.busy ? (data.activity?.length ? assistantTool(data.activity.at(-1)) : "Σκέφτομαι…") : data.messages.length ? "Έτοιμο" : "Κάνε μια ερώτηση για να ξεκινήσουμε."));
   $("assistant-send").disabled = !!data.busy;
   $("assistant-stop").hidden = !data.busy;
   $("assistant-clear").disabled = !!data.busy;
   const activity = $("assistant-activity");
-  activity.replaceChildren(...(data.activity || []).map((tool) => h("li", null, ASSISTANT_TOOLS[tool] || tool)));
+  activity.replaceChildren(...(data.activity || []).map((tool) => h("li", null, assistantTool(tool))));
   $("assistant-activity-wrap").hidden = !(data.activity?.length);
   $("assistant-provider").textContent = data.provider ? aiProviderName(data.provider) : "Επιλεγμένο AI CLI";
 }
@@ -129,7 +179,8 @@ async function sendStudentAssistant(question) {
   $("assistant-send").disabled = true;
   const request = ++studentAssistant.request;
   try {
-    const data = await api("/api/assistant", { method: "POST", body: { question } });
+    const access = assistantAccessActive() ? studentAssistant.access : null;
+    const data = await api("/api/assistant", { method: "POST", body: { question, access } });
     if (request !== studentAssistant.request) return;
     $("assistant-question").value = "";
     studentAssistant.data = data;
@@ -165,6 +216,27 @@ function initStudentAssistant() {
       renderStudentAssistant();
     } catch (err) { if (request === studentAssistant.request) $("assistant-status").textContent = err.message; }
   };
+  for (const button of document.querySelectorAll("#assistant-access [data-perm]")) {
+    button.addEventListener("click", () => {
+      const perm = button.dataset.perm, a = studentAssistant.access;
+      a[perm] = !a[perm];
+      if (a[perm] && perm !== "read") a.read = true;           // changing files needs seeing them
+      if (!a.read) a.write = a.delete = a.run = false;
+      renderAssistantAccess();
+    });
+  }
+  $("assistant-project").addEventListener("change", () => {
+    Object.assign(studentAssistant.access, { project: $("assistant-project").value, read: false, write: false, delete: false, run: false });
+    renderAssistantAccess();
+  });
+  $("assistant-types-reset").addEventListener("click", () => { $("assistant-types").value = studentAssistant.defaultTypes; });
+  $("assistant-access-save").addEventListener("click", async () => {
+    try {
+      const data = await api("/api/assistant/access", { method: "POST", body: { types: $("assistant-types").value, args: $("assistant-args").value } });
+      $("assistant-types").value = data.types;
+      $("assistant-access-status").textContent = "Αποθηκεύτηκε.";
+    } catch (err) { $("assistant-access-status").textContent = err.message; }
+  });
   $("assistant-stop").addEventListener("click", () => cancel(false));
   $("assistant-clear").addEventListener("click", () => cancel(true));
 }

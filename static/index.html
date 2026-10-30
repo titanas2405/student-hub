@@ -234,6 +234,23 @@
         <button type="button" class="chip" data-assistant-prompt="Τι πρέπει να κάνω σήμερα; Έλεγξε προθεσμίες και πρόσφατες ανακοινώσεις.">Τι έχω να κάνω;</button>
         <button type="button" class="chip" data-assistant-prompt="Δείξε μου τα μαθήματά μου και βοήθησέ με να βρω υλικό μελέτης στο eClass και στο DitLab.">Βρες υλικό μελέτης</button>
       </div>
+      <section id="assistant-access" class="assistant-access" aria-label="Πρόσβαση στο project" hidden>
+        <label class="assistant-access-project"><span>Project</span><select id="assistant-project" aria-label="Project για πρόσβαση"></select></label>
+        <div class="assistant-perms" role="group" aria-label="Δικαιώματα του AI σε αυτό το project">
+          <button type="button" class="perm" data-perm="read" aria-pressed="false" title="Λίστα και ανάγνωση αρχείων του project">Ανάγνωση</button>
+          <button type="button" class="perm" data-perm="write" aria-pressed="false" title="Δημιουργία και αλλαγή αρχείων">Εγγραφή</button>
+          <button type="button" class="perm danger" data-perm="delete" aria-pressed="false" title="Διαγραφή αρχείων">Διαγραφή</button>
+          <button type="button" class="perm danger" data-perm="run" aria-pressed="false" title="Εκτέλεση εντολών στον φάκελο του project">Εντολές</button>
+        </div>
+        <p id="assistant-access-note" class="assistant-access-note"></p>
+        <details class="assistant-access-settings">
+          <summary>Τύποι αρχείων &amp; ορίσματα</summary>
+          <label><span>Τύποι αρχείων που επιτρέπονται (* = όλα)</span><textarea id="assistant-types" rows="2" spellcheck="false"></textarea></label>
+          <label><span>Επιπλέον ορίσματα για το AI CLI</span><input id="assistant-args" spellcheck="false" placeholder="π.χ. --model sonnet"></label>
+          <div class="assistant-access-row"><button id="assistant-types-reset" type="button" class="btn plain">Προεπιλογές</button><button id="assistant-access-save" type="button" class="btn">Αποθήκευση</button></div>
+          <small id="assistant-access-status" class="muted" role="status"></small>
+        </details>
+      </section>
       <div id="assistant-messages" class="assistant-messages" role="log" aria-label="Συνομιλία με τον βοηθό"></div>
       <details id="assistant-activity-wrap" class="assistant-activity" hidden><summary>Πηγές που ελέγχω</summary><ol id="assistant-activity"></ol></details>
       <div id="assistant-status" class="assistant-status" role="status"></div>
@@ -246,7 +263,7 @@
           <button id="assistant-send" type="submit" class="btn primary">Αποστολή</button>
         </div>
       </form>
-      <small class="assistant-privacy">Οι πηγές που διαβάζω στέλνονται στο AI που επέλεξες μέσω CLI. Δεν αλλάζω τα δεδομένα σου. Η συνομιλία διαγράφεται με την αποσύνδεση. Shift+Enter: νέα γραμμή.</small>
+      <small class="assistant-privacy">Οι πηγές που διαβάζω στέλνονται στο AI που επέλεξες μέσω CLI. Δεν αλλάζω τα δεδομένα σου, εκτός από project στα οποία μου δίνεις πρόσβαση στην καρτέλα Projects. Η συνομιλία διαγράφεται με την αποσύνδεση. Shift+Enter: νέα γραμμή.</small>
     </aside>
   </div>
 

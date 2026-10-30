@@ -1435,3 +1435,17 @@ a.piazza-title:hover { color: var(--accent); }
 .tool-diff .hunk { color: var(--text-2); }
 @media (prefers-color-scheme: dark) { .tool-diff .add { color: #30d158; } .tool-diff .del { color: #ff453a; } }
 .tool-card-wide { grid-column: 1 / -1; }
+.assistant-access { margin: 10px 16px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); font-size: 12px; }
+.assistant-access-project { display: flex; align-items: center; gap: 8px; }
+.assistant-access-project select { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.assistant-perms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 8px 0 6px; }
+.assistant-perms .perm { border: 1px solid var(--line); border-radius: 7px; padding: 5px 2px; background: var(--bg); color: var(--text-2); font: inherit; font-size: 11px; cursor: pointer; }
+.assistant-perms .perm[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.assistant-perms .perm.danger[aria-pressed="true"] { background: #d70015; border-color: #d70015; }
+.assistant-perms .perm:disabled { opacity: .5; cursor: default; }
+.assistant-access-note { margin: 0; color: var(--text-2); line-height: 1.5; }
+.assistant-access-settings summary { cursor: pointer; margin-top: 6px; color: var(--accent); }
+.assistant-access-settings label { display: block; margin-top: 6px; }
+.assistant-access-settings label span { display: block; color: var(--text-2); margin-bottom: 2px; }
+.assistant-access-settings textarea, .assistant-access-settings input { width: 100%; box-sizing: border-box; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 11px ui-monospace, "SF Mono", Menlo, monospace; }
+.assistant-access-row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }

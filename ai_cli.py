@@ -143,6 +143,9 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
             args += ["--model", settings["model"]]
         if provider == "antigravity" and settings.get("effort"):
             args += ["--effort", settings["effort"]]
+        extra = list(settings.get("extra_args") or [])
+        if extra:                                   # the student's custom arguments, after the subcommand
+            args[2 if provider == "chatgpt" else 1:2 if provider == "chatgpt" else 1] = extra
         try:
             proc = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, env=env)

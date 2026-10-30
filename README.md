@@ -205,8 +205,10 @@ The assistant can retrieve mail and attachments without marking messages read,
 department/eClass announcements, assignments, course information, grades, timetable,
 calendar events, tracked project metadata, flashcards, Piazza feeds/posts and saved
 lecture summaries/subtitles. It reads data through Student Hub; it cannot send mail,
-change remote records, run arbitrary commands or browse arbitrary local folders.
-DitLab must first be connected in its existing tab.
+change remote records, run arbitrary commands or browse arbitrary local folders,
+except in a project you give it access to (below). DitLab must first be connected in its existing tab.
+
+**Project access** (Projects tab only): pick a project and switch on what the AI may do there: **Ανάγνωση** (list/read files), **Εγγραφή** (create/edit files), **Διαγραφή** (delete files) and **Εντολές** (run commands in the project folder, 5-minute limit, with your permissions). Everything is off until you press it, applies only to that project's folder (never outside it or in `.git`) and only to the file types you allow (*Τύποι αρχείων & ορίσματα*; `*` = all text files). Every overwritten or deleted file is backed up first, under the app's data folder in `assistant-backups/`, and the answer ends with the list of changes and commands, written by the app. *Επιπλέον ορίσματα* are extra arguments for the AI CLI in project mode (e.g. `--model sonnet`); arguments the app sets itself are refused. Emails and documents the AI reads could try to trick it, so switch on only what the task needs.
 
 For **eClass and DitLab documents**, it can list folders and search filenames through
 all nested levels, then read text from matching PDF, Office, text and code documents.

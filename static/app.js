@@ -509,6 +509,7 @@ function navigate(view) {
   $("briefing-view").hidden = view.type !== "briefing";
   $("projects-view").hidden = view.type !== "projects";
   $("tools-view").hidden = view.type !== "tools";
+  renderAssistantAccess();
   $("study-view").hidden = view.type !== "study";
   $("piazza-view").hidden = view.type !== "piazza";
   renderTopNav();

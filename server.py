@@ -31,6 +31,7 @@ import student_tools
 import ai_cli
 import student_assistant
 import project_humanizer
+import project_access
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -2828,6 +2829,7 @@ def run_claude(content, cwd, settings, schema=None, session=None, resume=None, o
         args.append("--no-session-persistence")
     if on_text:
         args.append("--include-partial-messages")
+    args[1:1] = list(settings.get("extra_args") or [])      # the student's custom arguments
     Path(cwd).mkdir(parents=True, exist_ok=True)
     proc = subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env={k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"})
@@ -6145,8 +6147,50 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             raise ApiError(400, "Write a question (up to 6,000 characters)")
         assistant = self._student_assistant(s)
-        assistant.ask(question.strip())
+        access, name, extra = self._assistant_access(body.get("access"))
+        assistant.ask(question.strip(), access, name, extra)
         self._json(202, assistant.status())
+
+    def _assistant_access(self, raw):
+        """The project permissions switched on in the chat (Projects tab only), or nothing."""
+        if not isinstance(raw, dict):
+            return None, "", None
+        permissions = {p for p in project_access.PERMISSIONS if raw.get(p) is True}
+        if not permissions:
+            return None, "", None
+        p = _project(str(raw.get("project") or ""))
+        cfg = load_config()
+        try:
+            access = project_access.ProjectAccess(p["path"], permissions, cfg.get("assistant_types") or project_access.DEFAULT_TYPES,
+                                                  app_data_dir("data") / "student-hub" / "assistant-backups" / p["id"])
+            extra = project_access.parse_args(cfg.get("assistant_args", ""))
+        except ValueError as e:
+            raise ApiError(409, str(e)) from None
+        return access, p["name"], extra
+
+    def api_get_assistant_access(self, q):
+        self._session()
+        cfg = load_config()
+        self._json(200, {"types": " ".join(cfg.get("assistant_types") or project_access.DEFAULT_TYPES),
+                         "args": cfg.get("assistant_args", ""), "defaultTypes": " ".join(project_access.DEFAULT_TYPES),
+                         "projects": [{"id": p["id"], "name": p["name"], "local": Path(p["path"]).is_dir()} for p in _projects()]})
+
+    def api_post_assistant_access(self, q):
+        s = self._session()
+        self._require_csrf(s)
+        b = self._read_json()
+        try:
+            types = project_access.parse_types(b.get("types"))
+            project_access.parse_args(b.get("args"))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+        if not types:
+            raise ApiError(400, "Give at least one file type, or * for all")
+        with _config_lock:
+            cfg = load_config()
+        cfg.update(assistant_types=types, assistant_args=str(b.get("args") or "").strip()[:2000])
+        save_config(cfg)
+        self.api_get_assistant_access(q)
 
     def api_delete_assistant(self, q):
         s = self._session()
