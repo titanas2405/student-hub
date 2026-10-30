@@ -5065,6 +5065,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(405, "Method not allowed")
         except ApiError as e:
             self._json(e.status, {"error": str(e)})
+        except ConnectionError:                        # the browser left (reload, closed tab); nobody to answer
+            self.close_connection = True
         except Exception as e:                         # don't leak internals to the client
             traceback.print_exc()
             self._json(500, {"error": "Something went wrong"})
