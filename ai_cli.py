@@ -115,7 +115,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
                 args += ["-c", 'model_reasoning_effort=' + json.dumps(settings["effort"])]
             if schema:
                 schema_path = folder / "schema.json"
-                schema_path.write_text(json.dumps(strict_schema(schema)))
+                schema_path.write_text(json.dumps(strict_schema(schema)), encoding="utf-8")
                 args += ["--output-schema", str(schema_path)]
             for path in images:
                 args += ["--image", str(path)]
@@ -123,7 +123,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
         elif provider == "gemini":
             # Keep the user's OAuth login, override tool/MCP discovery for this process only.
             config = folder / "settings.json"
-            config.write_text(json.dumps({"tools": {"core": [], "discoveryCommand": "", "callCommand": ""},
+            config.write_text(encoding="utf-8", data=json.dumps({"tools": {"core": [], "discoveryCommand": "", "callCommand": ""},
                                           "mcp": {"allowed": []}, "mcpServers": {},
                                           "admin": {"mcp": {"enabled": False}, "extensions": {"enabled": False}, "skills": {"enabled": False}},
                                           "general": {"enableAutoUpdate": False}, "hooks": {"enabled": False}}))
@@ -137,7 +137,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
                     "If image files are attached, inspect only those exact files.\n\n" + prompt]
             if schema:
                 schema_path = folder / "schema.json"
-                schema_path.write_text(json.dumps(schema))
+                schema_path.write_text(json.dumps(schema), encoding="utf-8")
                 args += ["--json-schema", str(schema_path)]
         if settings.get("model"):
             args += ["--model", settings["model"]]
@@ -148,7 +148,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
             args[2 if provider == "chatgpt" else 1:2 if provider == "chatgpt" else 1] = extra
         try:
             proc = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, env=env)
+                                    stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
         except OSError as exc:
             if provider == "antigravity":
                 raise RuntimeError("Google Antigravity CLI could not start. Install the build for this operating system and CPU architecture, or set STUDENT_HUB_AGY to its executable path.") from exc
@@ -167,7 +167,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
             raise RuntimeError(f"{label}: {(stderr or stdout).strip()[-500:] or 'CLI failed; check login and model access.'}")
         model = settings.get("model") or label
         if provider == "chatgpt":
-            answer = output.read_text() if output.is_file() else ""
+            answer = output.read_text(encoding="utf-8", errors="replace") if output.is_file() else ""
         else:
             try:
                 response = json.loads(stdout)

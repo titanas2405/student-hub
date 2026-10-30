@@ -19,8 +19,8 @@ class AccessTests(unittest.TestCase):
         base = Path(self.tmp.name)
         self.root = base / "proj"
         self.root.mkdir()
-        (self.root / "main.py").write_text("print('hi')\n")
-        (self.root / "notes.md").write_text("# Notes\n")
+        (self.root / "main.py").write_bytes(b"print('hi')\n")
+        (self.root / "notes.md").write_bytes(b"# Notes\n")
         (self.root / "image.png").write_bytes(b"\x89PNG\0")
         (self.root / ".git").mkdir()
         (self.root / ".git" / "config.md").write_text("x")
@@ -47,9 +47,13 @@ class AccessTests(unittest.TestCase):
         for bad in ("../secret.txt", "/etc/passwd", ".git/config.md", "sub/../../secret.txt"):
             with self.assertRaises(ValueError, msg=bad):
                 a.read(bad)
-        os.symlink(Path(self.tmp.name) / "secret.txt", self.root / "link.txt")
-        with self.assertRaises(ValueError):
-            a.read("link.txt")
+        try:
+            os.symlink(Path(self.tmp.name) / "secret.txt", self.root / "link.txt")
+        except OSError:                          # Windows without permission to create links
+            pass
+        else:
+            with self.assertRaises(ValueError):
+                a.read("link.txt")
         self.assertNotIn(".git/config.md", [f["path"] for f in a.files()["files"]])
 
     def test_file_types_limit_every_operation(self):

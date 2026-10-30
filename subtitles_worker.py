@@ -151,7 +151,7 @@ class FramePicker:
             self.listing.append({"id": fid, "t": round(t, 1)})
             out.append(self.listing[-1])
         tmp = self.folder / "frames.tmp"
-        tmp.write_text(json.dumps(self.listing))
+        tmp.write_text(json.dumps(self.listing), encoding="utf-8")
         tmp.replace(self.folder / "frames.json")
         return out
 

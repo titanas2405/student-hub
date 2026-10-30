@@ -1,6 +1,7 @@
 """Local document and archive tools. Uses Python's standard library and optional CLI tools."""
 import io
 import re
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,18 +19,53 @@ class ToolError(Exception):
 
 
 def capabilities():
-    return {"gs": bool(ghostscript()), **{name: bool(shutil.which(name))
+    return {"gs": bool(ghostscript()), **{name: bool(find_program(name))
             for name in ('pdfunite', 'pdfseparate', 'pdfinfo')}}
+
+
+# Where Windows installers put programs without adding them to PATH.
+WINDOWS_PLACES = {
+    "soffice": ["LibreOffice/program/soffice.exe"],
+    "libreoffice": ["LibreOffice/program/soffice.exe"],
+    "gswin64c": ["gs/*/bin/gswin64c.exe"],
+    "gswin32c": ["gs/*/bin/gswin32c.exe"],
+    "pdfinfo": ["poppler*/Library/bin/pdfinfo.exe", "poppler*/bin/pdfinfo.exe"],
+    "pdfunite": ["poppler*/Library/bin/pdfunite.exe", "poppler*/bin/pdfunite.exe"],
+    "pdfseparate": ["poppler*/Library/bin/pdfseparate.exe", "poppler*/bin/pdfseparate.exe"],
+    "pdftotext": ["poppler*/Library/bin/pdftotext.exe", "poppler*/bin/pdftotext.exe"],
+}
+
+
+IS_WINDOWS = os.name == "nt"
+
+
+def find_program(*names):
+    """A program on PATH, or on Windows in its usual install folder under Program Files."""
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    if IS_WINDOWS:
+        roots = {os.environ.get(k) for k in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")} - {None}
+        for name in names:
+            for pattern in WINDOWS_PLACES.get(name, []):
+                for root in sorted(roots):
+                    hits = sorted(Path(root).glob(pattern), reverse=True)        # newest version first
+                    if hits:
+                        return str(hits[0])
+    return None
 
 
 def ghostscript():
     """Find Ghostscript under its Unix or Windows executable name."""
-    return next((shutil.which(name) for name in ("gs", "gswin64c", "gswin32c") if shutil.which(name)), None)
+    return find_program("gs", "gswin64c", "gswin32c")
 
 
 def run(args, timeout=90):
-    if not shutil.which(args[0]):
+    program = find_program(args[0])
+    if not program:
         raise ToolError(f"Install {args[0]} on the computer running Student Hub to enable this tool", 503)
+    args = [program, *args[1:]]
     try:
         result = subprocess.run(args, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -74,7 +110,7 @@ def checked_zip(data):
             raise ToolError('ZIP files may contain at most 2,000 entries and 200 MB of extracted data')
         seen = set()
         for entry in entries:
-            name = entry.filename
+            name = entry.orig_filename          # as stored: on Windows zipfile turns "a\\b" into "a/b" in .filename
             parts = name.rstrip('/').split('/')
             if (name.startswith('/') or '\\' in name or any(p in ('', '.', '..') for p in parts)
                     or any(ord(c) < 32 for c in name) or ':' in name or name in seen):

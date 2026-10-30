@@ -7,8 +7,19 @@ python3 server.py
 ```
 Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard library only).
 
-On Windows, install Python 3.9 or newer, open PowerShell in the project folder,
-and run `py -3 server.py`; then open http://127.0.0.1:8765. Settings and cached
+### Windows
+
+1. Install Python 3.9 or newer from python.org and tick **Add python.exe to PATH** in the installer.
+2. Double-click **`start-windows.bat`** in the project folder. It checks the setup, starts Student Hub in UTF-8 mode
+   (so Greek text works with every AI CLI and file) and opens http://127.0.0.1:8765. Keep its window open while you
+   use the app.
+3. Optional programs, each enabling more features. The check lists what's missing and how to install it:
+   `winget install Git.Git GitHub.cli` (Projects; then `gh auth login`), `winget install TheDocumentFoundation.LibreOffice`
+   (Word → PDF), Ghostscript (PDF compression) and Poppler (PDF merge/split/text), and an AI CLI, which needs Node.js
+   (`winget install OpenJS.NodeJS.LTS`): `npm install -g @anthropic-ai/claude-code`, `@google/gemini-cli` or `@openai/codex`,
+   then sign in once in a terminal. LibreOffice and Ghostscript are found in `Program Files` even if they aren't on PATH.
+
+To check the setup any time: `py -3 server.py --check` (or `python3 server.py --check` on macOS/Linux). Settings and cached
 files are stored under `%APPDATA%\student-hub` and `%LOCALAPPDATA%\student-hub`.
 Google Antigravity, Gemini and other AI CLIs must be installed and signed in on
 Windows separately; see **Choosing an AI CLI** below.

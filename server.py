@@ -11,6 +11,7 @@ import http.cookiejar
 import html
 import imaplib
 import json
+import locale
 import mimetypes
 import os
 import re
@@ -18,6 +19,7 @@ import secrets
 import shutil
 import smtplib
 import socket
+import socketserver
 import tempfile
 import ssl
 import subprocess
@@ -62,6 +64,15 @@ def app_data_dir(kind):
         base = os.environ.get("APPDATA" if kind == "config" else "LOCALAPPDATA")
         return Path(base) if base else fallback
     return Path.home() / {"config": ".config", "cache": ".cache", "data": ".local/share"}[kind]
+
+
+def read_text_file(path):
+    """Text the app saved: UTF-8, or the Windows code page that older versions wrote (e.g. cp1253 for Greek)."""
+    data = Path(path).read_bytes()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False) or "cp1253", errors="replace")
 
 
 CONFIG_DIR = app_data_dir("config") / "student-hub"
@@ -132,7 +143,7 @@ INSTITUTIONS = {
 
 def load_config():
     try:
-        cfg = json.loads(CONFIG_FILE.read_text())
+        cfg = json.loads(read_text_file(CONFIG_FILE))
     except (OSError, ValueError):
         cfg = {"imap_url": DEFAULT_IMAP, "smtp_url": DEFAULT_SMTP, "username": ""}
     cfg.setdefault("feeds", [])
@@ -158,7 +169,7 @@ def save_config(cfg):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG_FILE.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
         os.replace(tmp, CONFIG_FILE)
 
@@ -1785,7 +1796,7 @@ class PortalClient:
 
         def save(name, text):
             fd = os.open(folder / name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
         pages = self.candidate_pages(explore=True)
         index, scripts, apis = [], [], set()
@@ -2485,13 +2496,13 @@ def groq_key():
     if env:
         return env
     try:
-        return GROQ_KEY_FILE.read_text().strip()
+        return read_text_file(GROQ_KEY_FILE).strip()
     except OSError:
         return ""
 
 
 def worker_env(**extra):
-    env = dict(os.environ, **extra)
+    env = dict(os.environ, **extra, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")    # its output is read as UTF-8
     env.pop("GROQ_API_KEY", None)
     if groq_key():
         env["GROQ_API_KEY"] = groq_key()      # in the environment, not the command line (ps shows arguments)
@@ -2653,7 +2664,7 @@ class Subtitles:
                         continue
                     url = uniflix_video(lid)["url"]
                     proc = subprocess.Popen([str(WHISPER_PY), str(SUBS_WORKER), url, str(part), job["model"], job["topic"]],
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=worker_env())
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=worker_env())
                     job["proc"] = proc
                     err = read_worker(proc, job)
                     if proc.wait() != 0:
@@ -2832,7 +2843,7 @@ def run_claude(content, cwd, settings, schema=None, session=None, resume=None, o
     args[1:1] = list(settings.get("extra_args") or [])      # the student's custom arguments
     Path(cwd).mkdir(parents=True, exist_ok=True)
     proc = subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env={k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"})
+                            text=True, encoding="utf-8", errors="replace", env={k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"})
     if on_proc:
         on_proc(proc)
     timer = threading.Timer(CLAUDE_TIMEOUT, proc.kill)
@@ -2926,7 +2937,7 @@ class Instructor:
     def _load(cls, lid):
         """Saved state of a lecture: its parts (time span, frames) and the summary of each part written so far."""
         try:
-            return json.loads((cls.folder(lid) / "parts.json").read_text())
+            return json.loads(read_text_file((cls.folder(lid) / "parts.json")))
         except (OSError, ValueError):
             return {"parts": [], "results": {}, "duration": 0}
 
@@ -2938,7 +2949,7 @@ class Instructor:
                     "results": {str(i): r for i, r in job["results"].items()}, "duration": job.get("duration") or 0,
                     "complete": job.get("parts_complete", False)}
         tmp = cls.folder(lid) / "parts.tmp"
-        tmp.write_text(json.dumps(data, ensure_ascii=False))
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cls.folder(lid) / "parts.json")
 
     @classmethod
@@ -2953,7 +2964,7 @@ class Instructor:
                 out["summary"] = cls._assemble(job)
                 return out
         try:
-            return {"status": "done", "summary": json.loads((cls.folder(lid) / "summary.json").read_text())}
+            return {"status": "done", "summary": json.loads(read_text_file((cls.folder(lid) / "summary.json")))}
         except (OSError, ValueError):
             pass
         if not cls.available():
@@ -3082,7 +3093,7 @@ class Instructor:
             url = uniflix_video(lid)["url"]
             env = worker_env(FRAMES_DIR=str(frames_dir), SKIP_TRANSCRIBE="0" if need_subs else "1")
             proc = subprocess.Popen([str(WHISPER_PY), str(SUBS_WORKER), url, str(part), SUBS_MODELS["accurate"],
-                                     job["course"]], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+                                     job["course"]], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
             job["proc"] = sub_job["proc"] = proc
             err = read_worker(proc, job, sub_job, on_event=on_event)
             if proc.wait() != 0:
@@ -3184,7 +3195,7 @@ class Instructor:
                        effort=job["settings"].get("effort", ""), provider=job["settings"].get("provider", "claude"),
                        duration=round(job.get("duration") or (summary["sections"][-1]["start"] if summary["sections"] else 0)))
         tmp = cls.folder(lid) / "summary.tmp"
-        tmp.write_text(json.dumps(summary, ensure_ascii=False))
+        tmp.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cls.folder(lid) / "summary.json")
         with cls.lock:
             if cls.jobs.get(lid) is job:
@@ -3204,7 +3215,7 @@ class Chat:
     @classmethod
     def _load(cls, lid):
         try:
-            return json.loads(cls.path(lid).read_text())
+            return json.loads(read_text_file(cls.path(lid)))
         except (OSError, ValueError):
             return {"session": "", "messages": []}
 
@@ -3212,7 +3223,7 @@ class Chat:
     def _save(cls, lid, chat):
         Instructor.folder(lid).mkdir(parents=True, exist_ok=True)
         tmp = cls.path(lid).with_suffix(".tmp")
-        tmp.write_text(json.dumps(chat, ensure_ascii=False))
+        tmp.write_text(json.dumps(chat, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cls.path(lid))
 
     @classmethod
@@ -3389,7 +3400,7 @@ class Briefing:
     @classmethod
     def _load(cls, key):
         try:
-            return json.loads(cls.path(key).read_text())
+            return json.loads(read_text_file(cls.path(key)))
         except (OSError, ValueError):
             return None
 
@@ -3554,7 +3565,7 @@ class Briefing:
     def _write(cls, key, data):
         tmp = cls.path(key).with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)     # personal: readable only by you
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, cls.path(key))
 
@@ -3615,7 +3626,7 @@ def project_settings():
 def run_cmd(args, cwd=None, timeout=120, check=True):
     """Runs gh or git; returns stdout. Errors carry the tool's own message (never a token: gh doesn't print it)."""
     try:
-        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GH_PROMPT_DISABLED="1", NO_COLOR="1"))
     except subprocess.TimeoutExpired:
         raise ApiError(504, f"Το {Path(args[0]).name} άργησε πολύ να απαντήσει") from None
@@ -3902,7 +3913,7 @@ def launch_ide(ide_id, path):
 # transcripts), its eClass documents and the student's notes. Each deck remembers which sources its cards came
 # from (and which couldn't be read). Kept in ~/.local/share/student-hub/study/.
 STUDY_DIR = app_data_dir("data") / "student-hub" / "study"
-PDFTOTEXT = shutil.which("pdftotext")
+PDFTOTEXT = student_tools.find_program("pdftotext")
 _study_lock = threading.Lock()
 CARD_KINDS = ["definition", "concept", "question", "formula", "code", "problem"]
 CARD_SCHEMA = {"type": "object", "properties": {"cards": {"type": "array", "items": {"type": "object", "properties": {
@@ -3934,7 +3945,7 @@ def study_path(name):
 
 def _read_json(path, default):
     try:
-        return json.loads(path.read_text())
+        return json.loads(read_text_file(path))
     except (OSError, ValueError):
         return default
 
@@ -3942,7 +3953,7 @@ def _read_json(path, default):
 def _write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False))
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -4344,7 +4355,7 @@ def gcal_tools():
                 "--tools", "", "--no-session-persistence", "--model", "haiku"] + (["--strict-mcp-config"] if strict else [])
         try:
             proc = subprocess.Popen(args, cwd=str(BRIEF_DIR if BRIEF_DIR.is_dir() else Path.home()), stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
         except OSError:
             return [], False
         tools = []
@@ -4426,7 +4437,7 @@ class GoogleCalendar:
             if st.get("model"):
                 args += ["--model", st["model"]]
             proc = subprocess.Popen(args, cwd=str(BRIEF_DIR), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, env={k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"})
+                                    stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env={k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"})
             job["proc"] = proc
             timer = threading.Timer(CLAUDE_TIMEOUT, proc.kill)
             timer.start()
@@ -4708,7 +4719,7 @@ def save_eclass_capture(name, text):
         folder.mkdir(parents=True, mode=0o700, exist_ok=True)
         os.chmod(CAPTURE_DIR, 0o700)
         fd = os.open(folder / re.sub(r"[^\w.-]", "_", name), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
     except OSError:
         pass
@@ -5009,7 +5020,7 @@ TEXT_EXT = {"txt", "md", "markdown", "c", "h", "cpp", "hpp", "cc", "py", "java",
             "xml", "sh", "sql", "log", "ini", "yaml", "yml", "tex", "m", "r", "go", "rs", "hs", "ml", "asm", "s",
             "v", "vhd", "vhdl", "css", "html", "htm", "kt", "swift", "php", "rb", "pl", "lua", "mk", "makefile",
             "dockerfile", "gitignore", "toml", "cfg", "conf", "bib", "pro", "lisp", "scm", "erl", "ex", "cs", "sv"}
-SOFFICE = shutil.which("soffice") or shutil.which("libreoffice")
+SOFFICE = student_tools.find_program("soffice", "libreoffice")
 CONVERT_DIR = SUBS_DIR.parent / "converted"
 _convert_lock = threading.Lock()        # LibreOffice runs one conversion at a time per profile
 _converted = {}                         # source key -> converted PDF path (this run)
@@ -5257,7 +5268,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---- local document tools
     def api_get_tools(self, q):
         self._session()
-        self._json(200, {"pdf": bool(shutil.which("libreoffice") or shutil.which("soffice")), **student_tools.capabilities()})
+        self._json(200, {"pdf": bool(SOFFICE), **student_tools.capabilities()})
 
     def api_post_tools_process(self, q):
         self._require_csrf(self._session())
@@ -5294,7 +5305,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Choose a Word (.doc, .docx) or OpenDocument (.odt) file")
         if not self.body:
             raise ApiError(400, "The document is empty")
-        executable = shutil.which("libreoffice") or shutil.which("soffice")
+        executable = SOFFICE
         if not executable:
             raise ApiError(503, "Install LibreOffice on the computer running Student Hub, then try again")
         with tempfile.TemporaryDirectory(prefix="student-hub-pdf-") as folder:
@@ -5823,7 +5834,7 @@ class Handler(BaseHTTPRequestHandler):
         path.mkdir(parents=True)
         try:
             (path / "README.md").write_text(readme_for(p), encoding="utf-8")
-            (path / ".gitignore").write_text(GITIGNORES[template])
+            (path / ".gitignore").write_text(GITIGNORES[template], encoding="utf-8")
             run_cmd([GIT, "init", "-b", "main"], cwd=path)
             run_cmd([GIT, "add", "-A"], cwd=path)
             ident = [] if run_cmd([GIT, "config", "user.email"], cwd=path, check=False).strip() else \
@@ -6258,7 +6269,7 @@ class Handler(BaseHTTPRequestHandler):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         tmp = GROQ_KEY_FILE.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(key)
         os.replace(tmp, GROQ_KEY_FILE)
         self._json(200, {"set": True})
@@ -6676,9 +6687,84 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"items": items, "errors": errors})
 
 
+def setup_check():
+    """`server.py --check`: what is installed, what each optional part enables and how to add what's missing."""
+    win = os.name == "nt"
+    py = "py -3" if win else "python3"
+    rows, problems = [], 0
+
+    def row(ok, name, detail, fix="", required=False):
+        nonlocal problems
+        problems += required and not ok
+        rows.append(f"  [{'OK' if ok else ('!!' if required else '--')}] {name}: {detail}" + ("" if ok or not fix else f"\n         -> {fix}"))
+
+    row(sys.version_info >= (3, 9), "Python", f"{sys.version.split()[0]} ({sys.executable})",
+        "install Python 3.9+ from python.org" + (" and tick 'Add python.exe to PATH'" if win else ""), True)
+    for kind in ("config", "cache", "data"):
+        folder = app_data_dir(kind) / "student-hub"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            probe = folder / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            row(True, f"{kind} folder", str(folder))
+        except OSError as e:
+            row(False, f"{kind} folder", f"{folder} is not writable ({e})", "check the folder's permissions", True)
+    with socket.socket() as probe:
+        try:
+            probe.bind((HOST, PORT))
+            row(True, "port", f"{PORT} is free")
+        except OSError:
+            row(False, "port", f"{PORT} is in use (Student Hub already running?)", "close it, or set STUDENT_HUB_PORT=8766", True)
+    get = {"git": "winget install Git.Git" if win else "install git with your package manager",
+           "gh": "winget install GitHub.cli, then: gh auth login" if win else "install the GitHub CLI (cli.github.com), then: gh auth login"}
+    row(bool(GIT), "git", GIT or "not found (Projects)", get["git"])
+    row(bool(GH), "GitHub CLI", GH or "not found (Projects)", get["gh"])
+    row(bool(SOFFICE), "LibreOffice", SOFFICE or "not found (Word -> PDF, Office previews)",
+        "winget install TheDocumentFoundation.LibreOffice" if win else "install LibreOffice")
+    gs = student_tools.ghostscript()
+    row(bool(gs), "Ghostscript", gs or "not found (PDF compression)", "install it from ghostscript.com")
+    poppler = student_tools.find_program("pdfinfo")
+    row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)",
+        "download Poppler for Windows and add its Library\\bin folder to PATH" if win else "install poppler-utils")
+    npm = {"claude": "npm install -g @anthropic-ai/claude-code", "gemini": "npm install -g @google/gemini-cli",
+           "chatgpt": "npm install -g @openai/codex", "antigravity": "see 'Choosing an AI CLI' in the README"}
+    ai_any = False
+    for key, (label, _) in ai_cli.PROVIDERS.items():
+        found = ai_available(key)
+        ai_any |= found
+        row(found, label, ai_cli.binary(key) if found else "not found",
+            npm[key] + (" (needs Node.js: winget install OpenJS.NodeJS.LTS)" if win and key != "antigravity" else "") + ", then sign in once in a terminal")
+    row(WHISPER_PY.exists(), "Whisper", str(WHISPER_PY) if WHISPER_PY.exists() else "not installed (local lecture subtitles; a Groq key also works)",
+        "see 'Subtitles' in the README")
+    print("Student Hub setup check\n" + "\n".join(rows))
+    print("\nRequired parts are fine." if not problems else f"\n{problems} required part(s) need fixing (marked !!).")
+    if not ai_any:
+        print("No AI CLI found: the assistant and AI tools need one of them.")
+    print(f"Start with:  {py} server.py   then open http://127.0.0.1:{PORT}")
+    return 1 if problems else 0
+
+
+class HubServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer looks up the computer's network name here, which can take many seconds on some Macs and
+        # Windows networks; the app only listens on 127.0.0.1 and never needs it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def main():
+    for stream in (sys.stdout, sys.stderr):           # a Windows console can't print every character
+        if stream and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+    if "--check" in sys.argv[1:]:
+        sys.exit(setup_check())
     socket.setdefaulttimeout(NET_TIMEOUT * 2)
-    httpd = ThreadingHTTPServer((HOST, PORT), Handler)
+    try:
+        httpd = HubServer((HOST, PORT), Handler)
+    except OSError as e:
+        sys.exit(f"Student Hub can't listen on http://127.0.0.1:{PORT}: {e}\n"
+                 f"Is it already running? Otherwise set another port, e.g. STUDENT_HUB_PORT=8766.")
     httpd.daemon_threads = True
     print(f"Student Hub running at http://127.0.0.1:{PORT}  (Ctrl+C to stop)")
     try:

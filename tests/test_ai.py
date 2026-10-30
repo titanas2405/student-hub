@@ -23,7 +23,7 @@ class CLITests(unittest.TestCase):
             def communicate(prompt=None, timeout=None):
                 captured['prompt'] = prompt
                 if provider == 'chatgpt':
-                    Path(args[args.index('-o') + 1]).write_text(answer)
+                    Path(args[args.index('-o') + 1]).write_text(answer, encoding='utf-8')
                     return '', error or ''
                 if provider == 'antigravity':
                     return json.dumps({'status': 'SUCCESS', 'response': answer,

@@ -3,6 +3,7 @@
 Every operation stays inside the project root (no "..", no symlinks out, never .git), only touches the file
 types the student allowed, and backs up a file before it is overwritten or deleted.
 """
+import locale
 import os
 import shlex
 import shutil
@@ -25,6 +26,14 @@ RUN_OUTPUT = 20_000
 # Arguments the app sets itself; overriding them would break how answers are read back.
 RESERVED_ARGS = {"-p", "--print", "--output-format", "--input-format", "--json-schema", "--output-schema", "-o",
                  "--output-last-message", "--resume", "--session-id", "--verbose"}
+
+
+def decode(data):
+    """UTF-8, or the Windows code page (e.g. cp1253 for Greek) for files and console output that use it."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False) or "cp1253", errors="replace")
 
 
 def parse_types(text):
@@ -121,7 +130,7 @@ class ProjectAccess:
             raise ValueError("File is larger than 2 MB")
         if b"\0" in data[:8192]:
             raise ValueError("Binary file; only text files can be read")
-        text = data.decode("utf-8", "replace")
+        text = decode(data)
         end = min(len(text), offset + CHUNK)
         return {"path": self.rel(p), "text": text[offset:end], "offset": offset, "totalCharacters": len(text),
                 "nextOffset": end if end < len(text) else None, "complete": end >= len(text)}
@@ -204,7 +213,7 @@ class ProjectAccess:
             timed_out = True
             self.kill(proc)
             out, _ = proc.communicate()
-        text = out.decode("utf-8", "replace")
+        text = decode(out)
         if len(text) > RUN_OUTPUT:
             text = text[:RUN_OUTPUT // 2] + "\n… [output shortened] …\n" + text[-RUN_OUTPUT // 2:]
         self.changes.append({"action": "ran", "path": command[:200], "exit": proc.returncode})
