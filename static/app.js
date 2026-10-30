@@ -88,6 +88,8 @@ const ICONS = {
   info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
   copy: "M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z",
   check: "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+  forum: "M21 6h-2v9H6v2c0 .55.45 1 1 1h11l4 4V7c0-.55-.45-1-1-1zm-4 6V3c0-.55-.45-1-1-1H3c-.55 0-1 .45-1 1v14l4-4h10c.55 0 1-.45 1-1z",
+  school: "M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3 1 9l11 6 9-4.91V17h2V9L12 3z",
   code: "M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z",
   github: "M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z",
   sparkle: "M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z",
@@ -154,8 +156,10 @@ const state = {
   lectures: { status: "idle", data: null, error: "", year: "", course: "" },
   timetable: { status: "idle", data: null, error: "", allSections: false, editing: false },
   deadlines: { status: "idle", items: null, error: "" },
-  briefing: { data: null, timer: 0, wasRunning: false },
+  briefing: { data: null, timer: 0, wasRunning: false, gcal: null, gcalTimer: 0 },
   projects: { data: null, loading: false, error: "", busy: {} },
+  study: { data: null, error: "", timer: 0, lectures: null },
+  piazza: { data: null, error: "", loading: false, cls: "" },
   ditlab: { status: "idle", username: "", reason: "", path: "/", items: [], results: null, emails: null, pick: null },
   eclass: { enabled: false, status: "idle", error: "", courses: [], items: [], errors: [] },
   query: "",
@@ -362,6 +366,7 @@ async function startApp(afterLogin = false) {
   loadAnnouncements();
   Promise.resolve(loadEclass()).finally(() => startBriefing(false));    // eClass signed in first, then shared
   loadProjects(false, true);
+  if (s.mail) loadPiazza(false, true);
   loadDitlabStatus();
 }
 
@@ -442,7 +447,7 @@ function renderFeedNav() {
 const VIEW_NEEDS = {
   mail: () => state.mail, studies: () => state.inst.ditStudies, timetable: () => state.inst.ditStudies,
   lectures: () => state.inst.ditStudies, grades: () => !!state.inst.grades, ditlab: () => state.inst.ditlab,
-  deadlines: () => true, ann: () => true, briefing: () => true, projects: () => true,
+  deadlines: () => true, ann: () => true, briefing: () => true, projects: () => true, study: () => true, piazza: () => state.mail,
 };
 
 function saveLocation() {
@@ -490,12 +495,21 @@ function navigate(view) {
   $("deadlines-view").hidden = view.type !== "deadlines";
   $("briefing-view").hidden = view.type !== "briefing";
   $("projects-view").hidden = view.type !== "projects";
+  $("study-view").hidden = view.type !== "study";
+  $("piazza-view").hidden = view.type !== "piazza";
   renderTopNav();
   renderDitlabNav();
   renderStudiesNav();
   if (view.type === "briefing") {
     $("view-title").textContent = "Σήμερα";
     renderBriefing();
+  } else if (view.type === "piazza") {
+    $("view-title").textContent = "Piazza";
+    state.piazza.data ? renderPiazza() : loadPiazza();
+  } else if (view.type === "study") {
+    $("view-title").textContent = "Μελέτη για εξετάσεις";
+    renderStudy();
+    loadStudy();
   } else if (view.type === "projects") {
     $("view-title").textContent = "Projects";
     loadProjects();
@@ -547,8 +561,73 @@ async function startBriefing(force) {
   pollBriefing();
 }
 
+async function pollGcal() {
+  const B = state.briefing;
+  clearTimeout(B.gcalTimer);
+  const was = B.gcal?.job?.status;
+  try { B.gcal = await api("/api/calendar/google"); } catch { return; }
+  const st = B.gcal.job?.status;
+  if (was === "running" && st === "done" && state.view.type !== "briefing") {
+    const n = (B.gcal.job.results || []).filter((r) => r.status === "created" || r.status === "updated").length;
+    toast(n ? `Το Google Calendar ενημερώθηκε: ${n} ${n === 1 ? "γεγονός" : "γεγονότα"}` : "Το Google Calendar είναι ενημερωμένο");
+  }
+  if (state.view.type === "briefing") renderBriefing();
+  if (st === "running") B.gcalTimer = setTimeout(pollGcal, 3000);
+}
+
+async function changeGcal(body) {
+  try { state.briefing.gcal = await api("/api/calendar/google", { method: "POST", body }); } catch (err) { toast(err.message); }
+  renderBriefing();
+  if (body.sync || state.briefing.gcal?.job?.status === "running") pollGcal();
+}
+
+const CAL_LABELS = [["deadlines", "Προθεσμίες εργασιών"], ["todos", "Εκκρεμότητες"], ["dates", "Σημαντικές ημερομηνίες"], ["timetable", "Πρόγραμμα μαθημάτων (εβδομαδιαία)"]];
+
+function calendarCard() {
+  const g = state.briefing.gcal;
+  if (!g) return null;
+  const include = new Set(g.include);
+  const job = g.job || {};
+  const kinds = h("div", { class: "cal-kinds" }, CAL_LABELS.map(([k, label]) => h("label", null,
+    h("input", { type: "checkbox", checked: include.has(k), onchange: (e) => {
+      if (e.target.checked) include.add(k); else include.delete(k);
+      changeGcal({ include: [...include] });
+    } }), label)));
+  const ics = `/api/calendar/ics?${new URLSearchParams({ include: [...include].join(","), t: state.csrf })}`;
+  let status;
+  if (job.status === "running") {
+    status = h("span", { class: "cal-status" }, h("span", { class: "spinner" }),
+      { events: "Μαζεύω τα γεγονότα…", connector: "Ελέγχω τη σύνδεση με το Google Calendar…", claude: "Το Claude ενημερώνει το Google Calendar…" }[job.step] || "…");
+  } else if (job.status === "error" && job.error === "NOT_CONNECTED") {
+    status = h("div", { class: "cal-connect" },
+      h("b", null, "Το Google Calendar δεν είναι συνδεδεμένο με τον λογαριασμό σου στο Claude."),
+      h("span", null, "Άνοιξε ", h("a", { href: "https://claude.ai/settings/connectors", target: "_blank", rel: "noopener noreferrer" }, "claude.ai → Settings → Connectors"),
+        ", πάτα Connect στο Google Calendar και δώσε άδεια με τον λογαριασμό σου στο Google. Μετά πάτα ξανά «Ενημέρωση»."));
+  } else if (job.status === "error") {
+    status = h("span", { class: "cal-status err" }, `Η ενημέρωση απέτυχε: ${job.error}`);
+  } else if (g.last) {
+    status = h("span", { class: "cal-status muted" }, `Τελευταία ενημέρωση ${agoText(g.last)}` + (g.lastCount ? ` · ${g.lastCount} νέα/αλλαγμένα` : "") +
+      (g.synced ? ` · ${g.synced} γεγονότα από το Student Hub` : ""));
+  }
+  const results = (job.results || []).filter((r) => r.status !== "exists");
+  return h("div", { class: "card brief-cal" },
+    kinds,
+    h("div", { class: "cal-row" },
+      h("a", { class: "btn plain", href: ics, download: "student-hub.ics", title: "Αρχείο .ics για Google Calendar (Ρυθμίσεις → Εισαγωγή), κινητό ή Thunderbird" }, "⬇ Λήψη .ics"),
+      h("button", { type: "button", class: "btn primary", disabled: job.status === "running" || !include.size, onclick: () => changeGcal({ sync: true }) }, "Ενημέρωση Google Calendar"),
+      h("label", { class: "cal-auto", title: "Μετά από κάθε νέα ενημέρωση «Σήμερα», το Claude προσθέτει τα καινούργια στο Google Calendar" },
+        h("input", { type: "checkbox", checked: g.auto, onchange: (e) => changeGcal({ auto: e.target.checked }) }), "Αυτόματα μετά από κάθε ενημέρωση")),
+    status || null,
+    results.length ? h("details", { class: "cal-results" }, h("summary", null, `${results.length} αλλαγές στο Google Calendar`),
+      h("ul", null, results.map((r) => h("li", { class: r.status }, `${{ created: "＋", updated: "✎", failed: "✕" }[r.status] || ""} ${r.title}`,
+        r.note && r.status === "failed" ? h("small", null, ` · ${r.note}`) : null)))) : null,
+    job.note ? h("small", { class: "muted" }, job.note) : null,
+    h("small", { class: "muted" }, "Στο Google Calendar τα γεγονότα τα προσθέτει το Claude με τον σύνδεσμο Google Calendar του λογαριασμού σου στο Claude. Δεν σβήνει ποτέ τίποτα, και δεν προσθέτει δύο φορές το ίδιο."));
+}
+
 async function pollBriefing() {
   clearTimeout(state.briefing.timer);
+  if (!state.briefing.gcal) pollGcal();
   const B = state.briefing;
   try { B.data = await api("/api/briefing"); } catch { return; }
   const running = B.data.status === "running";
@@ -556,6 +635,7 @@ async function pollBriefing() {
     const open = openTodos().length;
     toast(open ? `Η ενημέρωσή σου είναι έτοιμη: ${open} ${open === 1 ? "εκκρεμότητα" : "εκκρεμότητες"}` : "Η ενημέρωσή σου είναι έτοιμη");
   }
+  if (B.wasRunning && !running) pollGcal();
   B.wasRunning = running;
   renderTopNav();
   if (state.view.type === "briefing") renderBriefing();
@@ -582,7 +662,12 @@ function renderTopNav() {
     proj.querySelector(".count")?.classList.add("badge");
     proj.querySelector(".item").title = `${pending} προσκλήσεις σε projects ομάδας`;
   }
-  $("nav-top").replaceChildren(item, proj);
+  const study = navItem({ label: "Μελέτη", iconPath: ICONS.school, active: state.view.type === "study",
+    onclick: () => navigate({ type: "study" }) });
+  const unreadPiazza = (state.piazza.data?.items || []).filter((x) => x.unread).length;
+  const piazza = state.mail ? navItem({ label: "Piazza", iconPath: ICONS.forum, active: state.view.type === "piazza",
+    count: unreadPiazza || "", onclick: () => navigate({ type: "piazza" }) }) : null;
+  fill($("nav-top"), item, study, proj, piazza);
 }
 
 function dueInfo(due) {
@@ -681,6 +766,7 @@ function renderBriefing() {
         (BRIEF_STEPS.find(([k]) => k === d.step) || [, "Ενημέρωση…"])[1] + "…") : null),
     B.summary ? h("p", null, B.summary) : null));
   parts.push(h("h3", { class: "brief-h" }, "Τι έχεις να κάνεις", open.length ? h("span", { class: "count" }, open.length) : null));
+  const calCard = calendarCard();
   parts.push(open.length ? h("ul", { class: "card todo-list" }, open.map((t) => todoRow(t, false)))
     : h("div", { class: "card brief-note" }, q ? "Καμία εκκρεμότητα δεν ταιριάζει με την αναζήτηση." : "Δεν έχεις εκκρεμότητες. 🎉"));
   if (finished.length) {
@@ -700,6 +786,7 @@ function renderBriefing() {
       h("div", { class: "brief-updates" }, updates.map((x) => h("div", { class: "card brief-update" },
         h("strong", null, x.title), h("p", null, x.text), h("div", { class: "todo-meta" }, briefRefs(x.refs))))));
   }
+  if (calCard) parts.push(h("h3", { class: "brief-h" }, "Ημερολόγιο"), calCard);
   const c = d.counts || {};
   const src = [c.mail && `${c.mail} email`, c.eclass && `${c.eclass} ανακοινώσεις eClass`, c.deadlines && `${c.deadlines} εργασίες`,
     c.news && `${c.news} νέα του τμήματος`].filter(Boolean).join(", ");
@@ -1022,6 +1109,373 @@ async function openProjectDialog(kind, ctx) {
 function inviteResult(invites) {
   return h("ul", { class: "proj-invites" }, Object.entries(invites).map(([u, r]) => h("li", { class: r === "invited" || r === "member" ? "ok" : "fail" },
     `@${u}: ${r === "invited" ? "στάλθηκε πρόσκληση" : r === "member" ? "είναι ήδη μέλος" : r}`)));
+}
+
+// ---------- exam study mode: flashcards written by Claude from the course's lectures, documents and notes ----------
+const session = { deck: null, cards: [], index: 0, flipped: false };
+
+async function loadStudy() {
+  const S = state.study;
+  try { S.data = await api("/api/study"); S.error = ""; } catch (err) { S.error = err.message; }
+  if (state.view.type === "study") renderStudy();
+  clearTimeout(S.timer);
+  if (S.data?.decks.some((d) => d.job?.status === "running")) S.timer = setTimeout(loadStudy, 2500);
+}
+
+function renderStudy() {
+  const body = $("study-body"), S = state.study, d = S.data;
+  if (!d) {
+    return fill(body, S.error ? h("div", { class: "state" }, h("p", null, S.error), h("button", { class: "btn primary", onclick: loadStudy }, "Ξανά"))
+      : h("div", { class: "state" }, h("div", { class: "spinner" }), "Φόρτωση…"));
+  }
+  const q = state.query;
+  const n = d.decks.reduce((t, x) => t + x.total, 0);
+  $("view-sub").textContent = d.decks.length ? `${d.decks.length} ${d.decks.length === 1 ? "τράπουλα" : "τράπουλες"} · ${n} κάρτες` : "Κάρτες για τις εξετάσεις";
+  const decks = d.decks.filter((x) => !q || `${x.title} ${x.course}`.toLowerCase().includes(q));
+  const parts = [h("div", { class: "proj-bar" },
+    h("button", { type: "button", class: "btn primary", onclick: () => openDeckDialog() }, "＋ Νέα τράπουλα"),
+    h("span", { class: "muted" }, "Κάρτες ερωτήσεων-απαντήσεων από τις διαλέξεις, τα έγγραφα του eClass και τις σημειώσεις σου."))];
+  if (!d.decks.length) {
+    parts.push(h("div", { class: "card proj-empty" }, h("h3", null, "Ξεκίνα με μια τράπουλα"),
+      h("p", null, "Διάλεξε μάθημα και πηγές: διαλέξεις με σύνοψη του AI καθηγητή ή υπότιτλους, PDF/Word από τα Έγγραφα του eClass, ή δικές σου σημειώσεις. Το Claude γράφει τις ερωτήσεις και τις απαντήσεις.")));
+  }
+  parts.push(h("div", { class: "deck-grid" }, decks.map(deckCard)));
+  fill(body, parts);
+}
+
+// the sources a deck's cards were written from, with how many cards each gave and a link to open it
+function deckSources(x) {
+  const rows = (x.sources || []).map((src) => {
+    const count = src.cards != null ? h("small", { class: "muted" }, `${src.cards} ${src.cards === 1 ? "κάρτα" : "κάρτες"}`) : null;
+    if (src.type === "lecture") {
+      return h("li", null, icon(ICONS.play), h("span", { class: "src-name", title: src.label }, src.label),
+        src.from ? h("small", { class: "tag" }, src.from) : null, count,
+        h("a", { class: "src-open", href: `https://uniflix.uoa.gr/vod/player?id=${encodeURIComponent(src.id)}`, target: "_blank", rel: "noopener noreferrer", title: "Άνοιγμα σε νέα καρτέλα" }, "↗"));
+    }
+    if (src.type === "doc") {
+      return h("li", null, icon(ICONS.file), h("span", { class: "src-name", title: src.name }, src.name), count,
+        h("a", { class: "src-open", href: `/api/eclass/file?url=${encodeURIComponent(src.url)}`, target: "_blank", rel: "noopener", title: "Άνοιγμα σε νέα καρτέλα" }, "↗"));
+    }
+    return h("li", null, icon(ICONS.info), h("span", { class: "src-name" }, src.label || "Σημειώσεις"), count);
+  });
+  const skipped = (x.skipped || []).map((k) => h("li", { class: "skipped", title: k.reason }, icon(ICONS.file),
+    h("span", { class: "src-name" }, k.name), h("small", null, `δεν διαβάστηκε: ${k.reason}`)));
+  if (!rows.length && !skipped.length) return null;
+  return h("details", { class: "deck-sources", open: rows.length + skipped.length <= 4 },
+    h("summary", null, `Φτιαγμένες από ${rows.length} ${rows.length === 1 ? "πηγή" : "πηγές"}` + (skipped.length ? ` · ${skipped.length} δεν διαβάστηκαν` : "")),
+    h("ul", null, rows, skipped));
+}
+
+function deckCard(x) {
+  const job = x.job || {};
+  return h("div", { class: "card deck", style: `--h:${courseHue(x.courseCode || x.course)}` },
+    h("div", { class: "deck-top" },
+      h("span", { class: "work-course", style: `--h:${courseHue(x.courseCode || x.course)}` }, x.course || "Τράπουλα"),
+      h("b", null, `${x.total} ${x.total === 1 ? "κάρτα" : "κάρτες"}`)),
+    deckSources(x),
+    job.status === "running" ? h("div", { class: "deck-job" }, h("span", { class: "spinner" }),
+      { sources: "Διαβάζω τις πηγές…", documents: "Διαβάζω τα έγγραφα…", claude: "Το Claude γράφει κάρτες…" }[job.step] || "Ετοιμάζω…")
+      : job.status === "error" ? h("div", { class: "deck-job err" }, `Δεν γράφτηκαν κάρτες: ${job.error}`) : null,
+    h("div", { class: "deck-actions" },
+      h("button", { type: "button", class: "btn primary", disabled: !x.total, onclick: () => startSession(x.id) }, "Μελέτη"),
+      h("button", { type: "button", class: "btn plain", disabled: job.status === "running", onclick: () => openDeckDialog(x) }, "＋ Κάρτες"),
+      h("button", { type: "button", class: "btn plain faint deck-del", onclick: async () => {
+        if (!confirm(`Να διαγραφεί η τράπουλα «${x.title}» με ${x.total} κάρτες;`)) return;
+        try { state.study.data = await api(`/api/study/deck?id=${x.id}`, { method: "DELETE", body: {} }); renderStudy(); } catch (err) { toast(err.message); }
+      } }, "Διαγραφή")));
+}
+
+async function openDeckDialog(deck) {
+  const form = $("study-form");
+  $("study-dialog").hidden = false;
+  const close = () => { $("study-dialog").hidden = true; };
+  const courses = state.eclass.courses || [];
+  const course = h("select", { disabled: !!deck }, h("option", { value: "" }, "— Διάλεξε μάθημα —"),
+    courses.map((c) => h("option", { value: c.code, selected: deck?.courseCode === c.code }, c.title)));
+  const lectures = h("div", { class: "src-list" }), docs = h("div", { class: "src-list" });
+  const notes = h("textarea", { rows: 3, placeholder: "Προαιρετικά: επικόλλησε σημειώσεις, ύλη, θέματα προηγούμενων ετών…" });
+  const count = h("select", null, [15, 25, 40, 60].map((n) => h("option", { value: n, selected: n === 25 }, `${n} κάρτες`)));
+  const field = (label, el, hint) => h("label", { class: "field" }, h("span", null, label), el, hint ? h("small", { class: "muted" }, hint) : null);
+  const group = (label, el, hint) => h("div", { class: "field" }, h("span", null, label), el, hint ? h("small", { class: "muted" }, hint) : null);
+  const openLink = (href, title) => h("a", { class: "src-open", href, target: "_blank", rel: "noopener noreferrer", title, "aria-label": title,
+    onclick: (e) => e.stopPropagation() }, "↗");
+  const check = (value, label, tag, checked, disabled, href) => h("div", { class: "src" + (disabled ? " off" : "") },
+    h("label", null, h("input", { type: "checkbox", value, checked, disabled }), h("span", { class: "src-name", title: label }, label)),
+    tag ? h("small", { class: "tag" }, tag) : null, href ? openLink(href, "Άνοιγμα σε νέα καρτέλα") : null);
+  const req = { n: 0 };
+  async function loadSources() {
+    const code = course.value, id = ++req.n;
+    if (!code) { fill(lectures, h("small", { class: "muted" }, "Διάλεξε πρώτα μάθημα.")); fill(docs); return; }
+    fill(lectures, h("small", { class: "muted" }, h("span", { class: "spinner" }), " Διαλέξεις…"));
+    fill(docs, h("small", { class: "muted" }, h("span", { class: "spinner" }), " Έγγραφα…"));
+    (async () => {                                   // lectures of the course on uniflix
+      if (!state.study.lectures && state.inst.ditStudies) {     // every academic year, not only the one on the Lectures page
+        try { state.study.lectures = await api("/api/uniflix?y=a"); } catch (err) {
+          if (id === req.n) fill(lectures, h("small", { class: "muted" }, err.message)); return;
+        }
+      }
+      if (id !== req.n) return;
+      const entry = state.study.lectures?.courses.find((c) => c.code === code);
+      const list = entry?.lectures || [];
+      if (!list.length) return fill(lectures, h("small", { class: "muted" }, "Καμία διάλεξη στο uniflix για αυτό το μάθημα."));
+      const anySummary = list.some((l) => l.summary);
+      fill(lectures, list.map((l, i) => {
+        const dt = lectureDate(l.date);
+        const label = `${dt.day ? `${dt.num} ${dt.mon}` : ""} · ${l.title}`.replace(/^ · /, "");
+        const has = l.summary || l.subs;
+        const box = check(l.id, label, l.summary ? "σύνοψη" : l.subs ? "υπότιτλοι" : "χωρίς κείμενο", has && (l.summary || !anySummary), !has,
+          `https://uniflix.uoa.gr/vod/player?id=${encodeURIComponent(l.id)}`);
+        box.querySelector("input").dataset.label = `${entry.name || entry.title} · ${label}`;
+        box.title = has ? "" : "Φτιάξε πρώτα σύνοψη (AI καθηγητής) ή υπότιτλους στο player";
+        return box;
+      }));
+    })();
+    (async () => {                                   // the course's documents, in all its folders
+      let r;
+      try { r = await api(`/api/eclass/alldocs?code=${encodeURIComponent(code)}`); } catch (err) {
+        if (id === req.n) fill(docs, h("small", { class: "muted" }, err.message)); return;
+      }
+      if (id !== req.n) return;
+      // the type comes from whichever of title, link or download address has an extension; files with none are
+      // kept (the server recognizes PDF/Word/PowerPoint by their content), only media and archives are left out
+      const lastPart = (u) => { try { return decodeURIComponent((u || "").split("?")[0].split("/").pop() || ""); } catch { return ""; } };
+      const dlName = (u) => { const m = (u || "").match(/[?&]download=([^&]+)/); try { return m ? decodeURIComponent(m[1]).split("/").pop() : ""; } catch { return ""; } };
+      const SKIP = /\.(mp4|mkv|webm|avi|mov|mp3|wav|m4a|zip|rar|7z|tar|gz|png|jpe?g|gif|webp|bmp|svg|exe|iso)$/i;
+      const files = r.files.map((x) => {
+        const src = x.url || x.download;
+        const name = [x.name, lastPart(x.url), dlName(x.download), lastPart(x.download)].find((n) => n && viewKind(n)) || "";
+        return { name: name || x.name, known: !!name, title: x.name, url: src, folder: x.folder || "", old: isPastYear(x.when) };
+      }).filter((f) => f.known ? ["pdf", "office", "md", "text", "csv"].includes(viewKind(f.name)) : !SKIP.test(f.title));
+      files.sort((a, b) => a.old - b.old);           // this year's files first, older ones after
+      if (!files.length) return fill(docs, h("small", { class: "muted" }, `Κανένα PDF/Word/κείμενο στα Έγγραφα του μαθήματος (${r.files.length} αρχεία συνολικά).`));
+      const folders = [...new Set(files.map((f) => f.folder))].sort((a, b) => a.localeCompare(b, "el"));
+      const groups = folders.map((folder) => {
+        const boxes = files.filter((f) => f.folder === folder).map((f) => {
+          const ext = f.known ? (f.name.split(".").pop() || "").toUpperCase() : "αρχείο";
+          const box = check(f.url, f.title, f.old ? `${ext} · παλιό` : ext, false, false,
+            `/api/eclass/file?url=${encodeURIComponent(f.url)}`);
+          box.querySelector("input").dataset.name = f.name;
+          box.dataset.search = `${folder} ${f.title} ${f.name}`.toLowerCase();
+          return box;
+        });
+        const all = h("input", { type: "checkbox", title: "Όλα τα αρχεία του φακέλου" });
+        all.addEventListener("change", () => boxes.forEach((b) => { if (!b.hidden) b.querySelector("input").checked = all.checked; }));
+        return h("div", { class: "src-group" },
+          h("label", { class: "src-folder" }, all, icon(ICONS.folder), h("span", { class: "src-name" }, folder || "Κεντρικός φάκελος"),
+            h("small", { class: "tag" }, String(boxes.length))),
+          h("div", { class: "src-files" }, boxes));
+      });
+      const filter = h("input", { type: "search", class: "src-filter", placeholder: `Αναζήτηση σε ${files.length} αρχεία…`,
+        oninput: () => {
+          const q = filter.value.trim().toLowerCase();
+          for (const g of groups) {
+            let shown = 0;
+            for (const b of g.querySelectorAll(".src")) { b.hidden = !!q && !b.dataset.search.includes(q); if (!b.hidden) shown++; }
+            g.hidden = !shown;
+          }
+        } });
+      fill(docs, files.length > 6 ? filter : null, groups);
+    })();
+  }
+  course.addEventListener("change", loadSources);
+  fill(form, h("h2", null, deck ? `Κι άλλες κάρτες: ${deck.title}` : "Νέα τράπουλα"),
+    h("p", { class: "muted" }, "Το Claude διαβάζει τις πηγές και γράφει ερωτήσεις-απαντήσεις για την εξέταση. Μετράει στα όρια του πλάνου σου στο Claude."),
+    field("Μάθημα", course), group("Διαλέξεις", lectures), group("Έγγραφα (eClass)", docs, "Όλοι οι φάκελοι του μαθήματος. Τα PDF, Word και PowerPoint διαβάζονται σε αυτόν τον υπολογιστή."),
+    field("Σημειώσεις", notes), field("Πόσες κάρτες", count),
+    h("div", { class: "proj-form-actions" }, h("button", { type: "button", class: "btn plain", onclick: close }, "Άκυρο"),
+      h("button", { type: "submit", class: "btn primary" }, "Δημιουργία καρτών")));
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const c = courses.find((x) => x.code === course.value);
+    const sources = [
+      ...[...lectures.querySelectorAll("input:checked")].map((i) => ({ type: "lecture", id: i.value, label: i.dataset.label })),
+      ...[...docs.querySelectorAll("input:checked")].map((i) => ({ type: "doc", url: i.value, name: i.dataset.name })),
+      ...(notes.value.trim() ? [{ type: "notes", text: notes.value }] : [])];
+    if (!c && !deck) return toast("Διάλεξε μάθημα");
+    if (!sources.length) return toast("Διάλεξε τουλάχιστον μία πηγή");
+    try {
+      state.study.data = await api("/api/study/generate", { method: "POST", body: { deck: deck?.id || "", course: c?.title || deck?.course || "",
+        courseCode: c?.code || deck?.courseCode || "", sources, count: Number(count.value) } });
+      close();
+      toast("Το Claude γράφει τις κάρτες σου…");
+      navigate({ type: "study" });
+      loadStudy();
+    } catch (err) { toast(err.message); }
+  };
+  loadSources();
+  (deck ? notes : course).focus();
+}
+
+// ---- going through a deck: question, answer, next
+async function startSession(did) {
+  let deck;
+  try { deck = await api(`/api/study/deck?id=${did}`); } catch (err) { return toast(err.message); }
+  if (!deck.cards.length) return toast("Η τράπουλα δεν έχει κάρτες ακόμα");
+  Object.assign(session, { deck, cards: deck.cards, index: 0, flipped: false });
+  $("study").hidden = false;
+  $("study-title").textContent = deck.title;
+  showCard();
+}
+
+function sourceChip(src) {
+  if (!src) return null;
+  const tab = (href) => h("a", { class: "brief-ref tab", href, target: "_blank", rel: "noopener noreferrer", title: "Άνοιγμα σε νέα καρτέλα",
+    "aria-label": "Άνοιγμα σε νέα καρτέλα", onclick: (e) => e.stopPropagation() }, "↗");
+  if (src.type === "lecture") {
+    return h("span", { class: "src-chips" },
+      h("button", { type: "button", class: "brief-ref", title: "Άνοιγμα της διάλεξης σε αυτό το σημείο", onclick: (e) => { e.stopPropagation(); openLectureAt(src.id, src.at); } },
+        icon(ICONS.play), `${src.label}${src.at ? ` · ${fmtClock(src.at)}` : ""}`),
+      tab(`https://uniflix.uoa.gr/vod/player?id=${encodeURIComponent(src.id)}`));
+  }
+  if (src.type === "doc") {
+    return h("span", { class: "src-chips" },
+      h("button", { type: "button", class: "brief-ref", title: "Άνοιγμα του εγγράφου", onclick: (e) => {
+        e.stopPropagation();
+        openViewer([{ name: src.name, src: { src: "eclass", url: src.url } }], 0);
+      } }, icon(ICONS.file), src.name),
+      tab(`/api/eclass/file?url=${encodeURIComponent(src.url)}`));
+  }
+  return h("span", { class: "brief-ref" }, src.label || "Σημειώσεις");
+}
+
+async function openLectureAt(lid, at) {
+  if (!state.lectures.data) { try { state.lectures.data = await api("/api/uniflix"); } catch (err) { return toast(err.message); } }
+  for (const c of state.lectures.data.courses) {
+    const i = c.lectures.indexOf(c.lectures.find((l) => l.id === lid));
+    if (i >= 0) {
+      try { localStorage.setItem("uf:" + lid, JSON.stringify({ t: Math.max(0, Math.floor(at || 0) - 3) })); } catch {}
+      return openPlayer(c.lectures, i, c);          // the player resumes from the saved position
+    }
+  }
+  toast("Η διάλεξη δεν βρέθηκε στο uniflix");
+}
+
+function showCard() {
+  const card = session.cards[session.index];
+  if (!card) return showSessionEnd();
+  session.flipped = false;
+  $("study-count").textContent = `${session.index + 1} / ${session.cards.length}`;
+  const flash = h("div", { class: "flash", tabindex: "0", role: "button", "aria-label": "Δείξε την απάντηση", onclick: () => flipCard() },
+    h("div", { class: "flash-inner" },
+      h("div", { class: "face front" },
+        h("div", { class: "face-top" }, card.topic ? h("span", { class: "chip" }, card.topic) : null),
+        h("div", { class: "q" }, card.front),
+        h("div", { class: "face-foot" }, sourceChip(card.source))),
+      h("div", { class: "face back" },
+        h("div", { class: "q small" }, card.front),
+        h("div", { class: "a md" }, md(card.back)),
+        h("div", { class: "face-foot" }, sourceChip(card.source),
+          h("button", { type: "button", class: "link-btn", title: "Η κάρτα είναι λάθος ή άχρηστη", onclick: (e) => { e.stopPropagation(); deleteCard(card); } }, "Διαγραφή κάρτας")))));
+  fill($("study-stage"), flash);
+  fill($("study-foot"), h("button", { type: "button", class: "btn primary big", onclick: () => flipCard() }, "Δείξε την απάντηση", h("kbd", null, "Space")));
+  flash.focus();
+}
+
+function flipCard() {
+  if (session.flipped || !session.cards[session.index]) return;
+  session.flipped = true;
+  $("study-stage").querySelector(".flash").classList.add("flipped");
+  fill($("study-foot"), h("button", { type: "button", class: "btn primary big", onclick: nextCard },
+    session.index + 1 < session.cards.length ? "Επόμενη" : "Τέλος", h("kbd", null, "→")));
+  $("study-foot").querySelector("button").focus();
+}
+
+function nextCard() {
+  if (!session.flipped) return flipCard();
+  session.index++;
+  showCard();
+}
+
+async function deleteCard(card) {
+  if (!confirm("Να διαγραφεί αυτή η κάρτα;")) return;
+  try {
+    await api("/api/study/card", { method: "POST", body: { deck: session.deck.id, card: card.id, delete: true } });
+  } catch (err) { return toast(err.message); }
+  session.cards = session.cards.filter((c) => c.id !== card.id);
+  showCard();
+}
+
+function showSessionEnd() {
+  $("study-count").textContent = `${session.cards.length} / ${session.cards.length}`;
+  fill($("study-stage"), h("div", { class: "session-end" },
+    h("h3", null, "Τέλος της τράπουλας"),
+    h("p", { class: "muted" }, `Πέρασες και τις ${session.cards.length} κάρτες.`)));
+  fill($("study-foot"),
+    h("button", { type: "button", class: "btn plain", onclick: closeSession }, "Κλείσιμο"),
+    h("button", { type: "button", class: "btn primary", onclick: () => { session.index = 0; showCard(); } }, "Από την αρχή"));
+}
+
+function closeSession() {
+  $("study").hidden = true;
+  loadStudy();
+}
+
+// ---------- Piazza: course Q&A, from the notification emails Piazza sends ----------
+const PIAZZA_KINDS = { question: ["Ερώτηση", "q"], note: ["Σημείωση", "n"], instructor: ["Σημείωση διδάσκοντα", "i"],
+  reply: ["Απάντηση", "r"], digest: ["Σύνοψη", "d"], post: ["Ανάρτηση", "p"] };
+
+async function loadPiazza(refresh = false, quiet = false) {
+  const P = state.piazza;
+  if (P.loading) return;
+  P.loading = true;
+  if (!quiet && state.view.type === "piazza" && !P.data) renderPiazza();
+  try { P.data = await api("/api/piazza" + (refresh ? "?refresh=1" : "")); P.error = ""; }
+  catch (err) { P.error = err.message; }
+  finally { P.loading = false; }
+  renderTopNav();
+  if (state.view.type === "piazza") renderPiazza();
+}
+
+function renderPiazza() {
+  const body = $("piazza-body"), P = state.piazza, d = P.data;
+  if (!d) {
+    $("view-sub").textContent = P.error ? "" : "Διαβάζω τα email του Piazza…";
+    return fill(body, P.error ? h("div", { class: "state" }, h("p", null, P.error), h("button", { class: "btn primary", onclick: () => loadPiazza(true) }, "Ξανά"))
+      : h("div", { class: "state" }, h("div", { class: "spinner" }), "Διαβάζω τα email του Piazza…"));
+  }
+  const q = state.query;
+  const items = d.items.filter((x) => (!P.cls || x.classId === P.cls) &&
+    (!q || `${x.title} ${x.course} ${x.snippet} ${x.posts.map((p) => p.title).join(" ")}`.toLowerCase().includes(q)));
+  const unread = d.items.filter((x) => x.unread).length;
+  $("view-sub").textContent = d.items.length ? `${d.items.length} ειδοποιήσεις${unread ? ` · ${unread} αδιάβαστες` : ""} · ${d.classes.length} μαθήματα` : "Από τα email του Piazza";
+  const parts = [];
+  if (d.classes.length) {
+    parts.push(h("div", { class: "piazza-classes" },
+      h("button", { type: "button", class: "chip" + (!P.cls ? " on" : ""), onclick: () => { P.cls = ""; renderPiazza(); } }, "Όλα"),
+      d.classes.map((c) => h("span", { class: "chip-pair" },
+        h("button", { type: "button", class: "chip" + (P.cls === c.id ? " on" : ""), style: `--h:${courseHue(c.id)}`, onclick: () => { P.cls = c.id; renderPiazza(); } }, c.name),
+        h("a", { class: "chip ext", href: c.url, target: "_blank", rel: "noopener noreferrer", title: `Το ${c.name} στο Piazza` }, "↗")))));
+  }
+  if (!d.items.length) {
+    parts.push(h("div", { class: "card proj-empty" }, h("h3", null, "Δεν βρέθηκαν email από το Piazza"),
+      h("p", null, "Η καρτέλα δείχνει τις αναρτήσεις των μαθημάτων σου από τις ειδοποιήσεις που στέλνει το Piazza. Στο Piazza, άνοιξε Account / Email Settings και διάλεξε για κάθε μάθημα ειδοποιήσεις «Real time» (ή τουλάχιστον «Smart digest») προς το email που χρησιμοποιείς εδώ."),
+      h("a", { class: "btn plain", href: "https://piazza.com/account_settings", target: "_blank", rel: "noopener noreferrer" }, "Ρυθμίσεις email στο Piazza ↗")));
+  } else if (!items.length) {
+    parts.push(h("div", { class: "state" }, h("p", { class: "muted" }, "Τίποτα δεν ταιριάζει.")));
+  }
+  for (const x of items) {
+    const [kindLabel, kindCls] = PIAZZA_KINDS[x.kind] || PIAZZA_KINDS.post;
+    const main = x.posts[0];
+    parts.push(h("div", { class: "card piazza-post" + (x.unread ? " unread" : "") },
+      h("div", { class: "piazza-top" },
+        h("span", { class: "work-course", style: `--h:${courseHue(x.classId || x.course)}` }, x.course),
+        h("span", { class: `pz-kind k-${kindCls}` }, kindLabel),
+        h("span", { class: "muted" }, x.date ? fmtDateTime(x.date) : "")),
+      main && x.posts.length === 1
+        ? h("a", { class: "piazza-title", href: main.url, target: "_blank", rel: "noopener noreferrer" }, x.title)
+        : h("b", { class: "piazza-title" }, x.title),
+      x.kind !== "digest" && x.snippet ? h("p", { class: "piazza-snippet" }, x.snippet) : null,
+      x.posts.length > 1 ? h("ul", { class: "piazza-list" }, x.posts.map((p) => h("li", null,
+        h("a", { href: p.url, target: "_blank", rel: "noopener noreferrer" }, p.title || `Ανάρτηση @${p.post}`)))) : null,
+      h("div", { class: "piazza-actions" },
+        main ? h("a", { class: "btn plain", href: main.url, target: "_blank", rel: "noopener noreferrer" }, x.posts.length > 1 ? "Άνοιγμα στο Piazza ↗" : "Άνοιγμα της ανάρτησης ↗") : null,
+        h("button", { type: "button", class: "btn plain", onclick: () => {
+          navigate({ type: "mail", folder: "inbox", unread: false });
+          openMessage({ uid: x.uid, unread: x.unread });
+          x.unread = false;
+        } }, "Το email"))));
+  }
+  fill(body, parts);
 }
 
 // ---------- mail ----------
@@ -4012,6 +4466,8 @@ function init() {
     else if (state.view.type === "deadlines") loadDeadlines(true);
     else if (state.view.type === "briefing") startBriefing(true);
     else if (state.view.type === "projects") loadProjects(true);
+    else if (state.view.type === "study") loadStudy();
+    else if (state.view.type === "piazza") loadPiazza(true);
     else if (currentCourse() && activeCourseTab(currentCourse()) !== "ann") {
       const c = currentCourse(), [, tab, dir] = courseTab.view.split("|");
       loadCourseTab(c, tab, dir, true);
@@ -4035,6 +4491,8 @@ function init() {
   video.addEventListener("playing", () => { $("player-error").hidden = true; });
   $("player-start").addEventListener("click", startPlayback);
   $("proj-dialog").addEventListener("click", (e) => { if (e.target === $("proj-dialog")) $("proj-dialog").hidden = true; });
+  $("study-dialog").addEventListener("click", (e) => { if (e.target === $("study-dialog")) $("study-dialog").hidden = true; });
+  $("study-close").addEventListener("click", closeSession);
   $("viewer-close").addEventListener("click", closeViewer);
   $("viewer-prev").addEventListener("click", () => stepViewer(-1));
   $("viewer-next").addEventListener("click", () => stepViewer(1));
@@ -4058,6 +4516,8 @@ function init() {
     else if (state.view.type === "deadlines") renderDeadlines();
     else if (state.view.type === "briefing") renderBriefing();
     else if (state.view.type === "projects") renderProjects();
+    else if (state.view.type === "study") renderStudy();
+    else if (state.view.type === "piazza") renderPiazza();
     else if (currentCourse() && activeCourseTab(currentCourse()) !== "ann") renderCourseTab();
     else if (state.view.type === "studies") renderStudies();
     else searchAnn();
@@ -4065,8 +4525,11 @@ function init() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (!$("proj-dialog").hidden) $("proj-dialog").hidden = true;
-      else if (!$("viewer").hidden) closeViewer();
+      if (!$("viewer").hidden) closeViewer();
+      else if (!$("study-dialog").hidden) $("study-dialog").hidden = true;
+      else if (!$("player").hidden && !$("study").hidden) closePlayer();
+      else if (!$("study").hidden) closeSession();
+      else if (!$("proj-dialog").hidden) $("proj-dialog").hidden = true;
       else if (!$("player").hidden) closePlayer();
       else if (!$("tt-dialog").hidden) $("tt-dialog").hidden = true;
       else if (!$("compose").hidden) closeCompose();
@@ -4075,6 +4538,12 @@ function init() {
       return;
     }
     if ($("app").hidden || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (!$("study").hidden && $("viewer").hidden && $("player").hidden) {
+      if ((e.key === " " || e.key === "Enter") && !session.flipped) { e.preventDefault(); flipCard(); }
+      else if ((e.key === "ArrowRight" || e.key === " ") && session.flipped && e.target.tagName !== "BUTTON") { e.preventDefault(); nextCard(); }
+      else if (e.key === "ArrowRight" && session.flipped) { e.preventDefault(); nextCard(); }
+      return;
+    }
     if (!$("viewer").hidden) {
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); stepViewer(e.key === "ArrowLeft" ? -1 : 1); }
       if (viewer.zoomBy && viewKind(viewer.list[viewer.index]?.name) === "image") {

@@ -42,12 +42,35 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
   - It needs Whisper (above) and Claude Code installed and signed in once (run `claude` and follow the sign-in link).
 - **Σήμερα (briefing)**: when you sign in, Claude reads the last two weeks of your mail, your eClass courses' announcements, the department's news and your open eClass assignments, and tells you what you have to do. This opens as the first page.
   - It gives a short summary and a to-do list with deadlines, ordered by urgency. Each task has its course and links to the email, announcement or course it came from.
-  - Below that come important dates (exams, moved lectures) and other things worth knowing.
+  - Below that come important dates (exams, moved lectures) and other things worth knowing, and the calendar (see *Ημερολόγιο*).
   - Newsletters and ads are ignored. Already submitted assignments aren't listed. The same deadline found in an email and in eClass appears once.
   - Tick tasks off as you do them; ticks are remembered. The sidebar's *Σήμερα* shows how many tasks are open, in red if some are urgent.
   - On later sign-ins the sources are checked again, but Claude is asked only if something changed, and not again within 20 minutes. ↻ asks again now.
   - Mail stays unread. The model and thinking level are the ones chosen in the *AI καθηγητής* panel.
   - It uses Claude Code with your own plan, like the AI instructor: the emails and announcements are sent to Claude. The briefing is saved in `~/.cache/student-hub/briefing/`, readable only by you.
+- **Piazza**: your courses' Piazza posts, read from the notification emails Piazza sends.
+  - Each post shows its course, its kind (*Ερώτηση*, *Σημείωση*, *Σημείωση διδάσκοντα*, *Απάντηση*, or a digest with its list of posts), title and preview.
+  - **Άνοιγμα της ανάρτησης ↗** opens the post on piazza.com; *Το email* opens the original email in the app.
+  - Filter by course, or open a course's Piazza page (↗). The sidebar shows how many are unread.
+  - Piazza has no public API for students, and its private one isn't used, so turn on email notifications in Piazza (*Account / Email Settings*: "Real time" or "Smart digest" for each class) to the address you use here.
+  - Piazza emails are left unread.
+- **Ημερολόγιο (calendar)**: at the bottom of *Σήμερα*, choose what goes into your calendar: open eClass assignment deadlines, the to-dos and important dates from the briefing, and your weekly timetable (repeating until the end of the semester).
+  - **⬇ Λήψη .ics** downloads an iCalendar file. Import it into Google Calendar (*Settings → Import & export*), your phone or Thunderbird. Deadlines come with reminders a day and 3 hours before.
+  - **Ενημέρωση Google Calendar:** Claude adds the events to your Google Calendar through the *Google Calendar connector of your Claude account*. Connect it once at [claude.ai → Settings → Connectors](https://claude.ai/settings/connectors); Student Hub never sees a Google password or key.
+    - Claude gets only the list of events built by the app (never your emails), only the calendar tools, and none that deletes.
+    - Events carry a `student-hub:<id>` line, so nothing is added twice and changed deadlines are updated.
+  - With *Αυτόματα μετά από κάθε ενημέρωση* on, every new briefing also adds its new deadlines, to-dos and dates to Google Calendar.
+- **Μελέτη (exam study mode)**: flashcards for each course, written by Claude.
+  - **Making a deck:** *＋ Νέα τράπουλα* lets you choose a course and the sources:
+    - the course's lectures with an AI instructor summary or subtitles, from every academic year;
+    - files from all the folders of its eClass *Έγγραφα* (PDF, Word, PowerPoint, text; read on this computer);
+    - notes you paste in.
+    Each source has a ↗ to open it in a new tab first.
+  - **The cards:** Greek question-and-answer cards for the exam: definitions, concepts, formulas, algorithm steps, code, and small problems with worked answers.
+  - **Where they came from:** each deck lists the lectures, files and notes its cards were made from, with how many cards each gave, plus any file that couldn't be read and why (for example a scanned PDF). Each card shows its own source too: the lecture at the minute it's taught, or the document.
+  - *＋ Κάρτες* adds more cards without repeating existing ones, and a wrong card can be deleted.
+  - **Studying:** see the question, flip the card (Space) to see the answer, then *Επόμενη* (→) through the deck.
+  - **Saved where:** decks are kept in `~/.local/share/student-hub/study/`. Making cards uses your Claude plan, like the AI instructor; studying doesn't.
 - **Projects (GitHub)**: a GitHub repository for each assignment, tracked in the app.
   - **Creating a project:** press **Project** next to an assignment (in a course's *Εργασίες* tab or in *Προθεσμίες*), or **＋ Νέο project** on the *Projects* page.
     - The app suggests a repo name from the course and the assignment, transliterating Greek to Latin.

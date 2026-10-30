@@ -175,6 +175,14 @@
         <div id="studies-body" class="ann-list"></div>
       </section>
 
+      <section id="piazza-view" class="ann" hidden>
+        <div id="piazza-body" class="ann-list piazza"></div>
+      </section>
+
+      <section id="study-view" class="ann" hidden>
+        <div id="study-body" class="ann-list study"></div>
+      </section>
+
       <section id="projects-view" class="ann" hidden>
         <div id="projects-body" class="ann-list projects"></div>
       </section>
@@ -244,6 +252,28 @@
   <!-- New / join / invite dialog for GitHub projects -->
   <div id="proj-dialog" class="overlay" hidden>
     <form id="proj-form" class="sheet small-sheet proj-sheet" novalidate></form>
+  </div>
+
+  <!-- New deck / more cards -->
+  <div id="study-dialog" class="overlay" hidden>
+    <form id="study-form" class="sheet small-sheet proj-sheet study-sheet-form" novalidate></form>
+  </div>
+
+  <!-- Flashcard session -->
+  <div id="study" class="overlay" hidden>
+    <div class="sheet study-sheet" role="dialog" aria-modal="true" aria-labelledby="study-title">
+      <header class="study-head">
+        <div class="study-head-top">
+          <h2 id="study-title"></h2>
+          <span class="study-count" id="study-count"></span>
+          <button class="icon-btn" id="study-close" title="Τέλος (Esc)" aria-label="Τέλος">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+      </header>
+      <div class="study-body" id="study-stage"></div>
+      <footer class="study-foot" id="study-foot"></footer>
+    </div>
   </div>
 
   <!-- Lecture player -->
