@@ -131,7 +131,10 @@ class ChatTests(unittest.TestCase):
             self.assertIn("Νέο αρχείο: `hello.py`", answer)
             self.assertIn("(κωδικός εξόδου 0)", answer)
             self.assertIn("hello", prompts[1][1])                       # the command's output went back to the AI
-            self.assertIn("PROJECT ACCESS", prompts[0][0])
+            self.assertIn("PROJECT ACCESS IS ON", prompts[0][0])
+            self.assertNotIn("read-only retrieval tools for the student's connected accounts.", prompts[0][0])
+            self.assertNotIn("reading arbitrary local files", prompts[0][0])
+            self.assertIn('"allowed": ["read", "run", "write"]', prompts[0][1])
             self.assertNotIn("project_delete", prompts[0][0])            # not switched on, not offered
             self.assertEqual(prompts[0][2]["extra_args"], ["--model", "sonnet"])
             self.assertEqual((root / "hello.py").read_text(), "print('hello')\n")

@@ -39,6 +39,14 @@ function renderAssistantAccess() {
   if (!panel) return;
   const show = state.view.type === "projects";
   panel.hidden = !show;
+  const a0 = studentAssistant.access, names = { read: "ανάγνωση", write: "εγγραφή", delete: "διαγραφή", run: "εντολές" };
+  const granted = Object.keys(names).filter((p) => a0[p]);
+  const badge = $("assistant-access-badge");
+  badge.hidden = !granted.length || !a0.project;
+  badge.classList.toggle("off", !show);
+  badge.textContent = show
+    ? `Πρόσβαση στο ${$("assistant-project").selectedOptions[0]?.textContent || "project"}: ${granted.map((p) => names[p]).join(", ")}`
+    : "Η πρόσβαση στο project ισχύει μόνο στην καρτέλα Projects· εδώ ο βοηθός δεν αλλάζει αρχεία.";
   if (!show) return;
   if (!studentAssistant.accessLoaded) { studentAssistant.accessLoaded = true; loadAssistantAccess(); return; }
   const a = studentAssistant.access;
@@ -46,6 +54,7 @@ function renderAssistantAccess() {
     button.setAttribute("aria-pressed", String(!!a[button.dataset.perm]));
     button.disabled = !a.project;
   }
+  if (!a.project) $("assistant-access-badge").hidden = true;
   const on = ["read", "write", "delete", "run"].filter((p) => a[p]);
   $("assistant-access-note").textContent = !a.project ? "Δημιούργησε ή άνοιξε ένα project για να δώσεις πρόσβαση."
     : !on.length ? "Το AI δεν έχει πρόσβαση στο project. Πάτησε ό,τι επιτρέπεις."
