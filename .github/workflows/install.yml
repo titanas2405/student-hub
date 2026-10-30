@@ -41,6 +41,21 @@ jobs:
           if ($errors) { $errors; exit 1 }
           powershell -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$PWD\install-windows.ps1', [ref]`$null, [ref]`$e); if (`$e) { `$e; exit 1 }"
           if ($LASTEXITCODE) { exit 1 }
+      - name: Run install-windows.ps1 for real in Windows PowerShell 5.1
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File install-windows.ps1 -NoSignIn
+      - name: Everything it should have installed is there
+        shell: pwsh
+        run: |
+          Get-Content install-log.txt -Tail 40
+          py -3 -c "import truststore; print('truststore', truststore.__version__)"
+          if (-not (Test-Path "$env:USERPROFILE\.local\bin\claude.exe")) { 'claude.exe missing'; exit 1 }
+          if (-not (Test-Path ([Environment]::GetFolderPath('Desktop') + '\Student Hub.lnk'))) { 'desktop shortcut missing'; exit 1 }
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            if (-not (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe")) { 'LibreOffice missing although winget exists'; exit 1 }
+          } else { 'winget is not on this runner: the winget installs were not exercised' }
+          py -3 server.py --check
+          if ($LASTEXITCODE) { exit 1 }
       - name: Batch files have Windows line endings
         shell: pwsh
         run: |

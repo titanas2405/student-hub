@@ -1,156 +1,170 @@
-# Student Hub installer for Windows. Run it once before you sign in: double-click install-windows.bat,
-# or in PowerShell:  powershell -ExecutionPolicy Bypass -File install-windows.ps1 [-Yes]
-# It installs what the app uses with winget, lets you sign in to an AI CLI and GitHub, adds a desktop shortcut and
-# finishes with the setup check. -Yes installs the recommended parts without asking.
-param([switch]$Yes)
-Set-Location $PSScriptRoot
-$ProgressPreference = 'SilentlyContinue'   # PowerShell 5.1 draws progress over the messages (and downloads slowly)
-Start-Transcript -Path (Join-Path $PSScriptRoot 'install-log.txt') | Out-Null
-$script:step = 0
-function Step($text) { $script:step++; Write-Host "`n[$script:step/8] $text" -ForegroundColor Cyan }
-function Info($text) { Write-Host "      $text" }
+# Student Hub installer for Windows. Double-click install-windows.bat (or run:
+#   powershell -ExecutionPolicy Bypass -File install-windows.ps1 [-Whisper] [-NoSignIn])
+# It asks no questions: it installs Python (if needed), truststore, Git, the GitHub CLI, LibreOffice, Ghostscript,
+# Poppler and Claude Code, adds a desktop shortcut and runs the setup check. At the end it opens Claude and GitHub
+# sign-in in their own windows. -Whisper also installs local lecture subtitles (about 1 GB).
+param([switch]$Whisper, [switch]$NoSignIn)
 
-function Say($text) { Write-Host "`n$text" -ForegroundColor Cyan }
+Set-Location $PSScriptRoot
+$ProgressPreference = 'SilentlyContinue'   # PowerShell 5.1 draws progress over the messages and downloads slowly
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+Start-Transcript -Path (Join-Path $PSScriptRoot 'install-log.txt') | Out-Null
+
+$script:step = 0
+$script:problems = @()
+function Step($text) { $script:step++; Write-Host "`n[$script:step/9] $text" -ForegroundColor Cyan }
+function Info($text) { Write-Host "      $text" }
+function Warn($text) { Write-Host "      $text" -ForegroundColor Yellow; $script:problems += $text }
 function Have($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
-function Ask($question, $default = $true) {
-    if ($Yes) { return $default }
-    $hint = if ($default) { 'Y/n' } else { 'y/N' }
-    $answer = Read-Host "$question [$hint]"
-    if (-not $answer) { return $default }
-    return $answer -match '^[Yy]'
-}
 function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 function Add-UserPath($folder) {
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $user) { $user = '' }
     if (($user -split ';') -notcontains $folder) {
-        [Environment]::SetEnvironmentVariable('Path', ($user.TrimEnd(';') + ';' + $folder), 'User')
+        [Environment]::SetEnvironmentVariable('Path', ($user.TrimEnd(';') + ';' + $folder).TrimStart(';'), 'User')
     }
     Refresh-Path
 }
-function Winget($id) {
-    Info "Installing $id with winget. This can take a few minutes; winget shows its progress below."
+function Winget($id, $name) {
     if (-not (Have winget)) {
-        Write-Host "winget is missing: install 'App Installer' from the Microsoft Store, then run this again." -ForegroundColor Yellow
+        Warn "$name not installed: winget is missing (install 'App Installer' from the Microsoft Store)."
         return $false
     }
+    Info "Installing $name with winget. This can take a few minutes."
+    Info "If Windows asks for permission (a shield icon may blink in the taskbar), click Yes."
     winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent
-    $ok = $LASTEXITCODE -eq 0
-    if (-not $ok) { Write-Host "winget could not install $id (code $LASTEXITCODE)." -ForegroundColor Yellow }
+    $code = $LASTEXITCODE
     Refresh-Path
-    return $ok
+    # -1978335189 (0x8A15002B): already installed, nothing newer.
+    if ($code -eq 0 -or $code -eq -1978335189) { return $true }
+    Warn "$name could not be installed by winget (code $code)."
+    return $false
 }
-function Test-Python($command) {
-    if (-not (Have $command[0])) { return $false }
-    $rest = @($command | Select-Object -Skip 1)
-    & $command[0] @rest -c "import sys; sys.exit(sys.version_info < (3, 9))" 2>$null
+function Test-Python($exe, $extra) {
+    if (-not (Have $exe)) { return $false }
+    if ((Get-Command $exe).Source -like '*\WindowsApps\*') { return $false }   # the Microsoft Store shortcut, not a real Python
+    & $exe @extra -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" *> $null
     return $LASTEXITCODE -eq 0
 }
-function Find-Python {
-    if (Test-Python @('py', '-3')) { return ,@('py', '-3') }
-    if (Test-Python @('python')) { return ,@('python') }
-    return $null
-}
 
-Say 'Student Hub installer for Windows'
-Info "A log of everything is saved in install-log.txt. Press Enter to accept the answer in capitals ([Y/n] = yes)."
+Write-Host 'Student Hub installer for Windows' -ForegroundColor Cyan
+Info 'No questions: it installs everything recommended. A log is saved in install-log.txt.'
 
-# 1. Python (required).
+# 1. Python
 Step 'Python'
-Info 'Looking for Python 3.9 or newer (py or python)...'
-$python = Find-Python
-if (-not $python) {
-    Say 'Python 3.9 or newer is required. Installing Python 3.12...'
-    Winget 'Python.Python.3.12' | Out-Null
-    $python = Find-Python
-    if (-not $python) {
-        Write-Host 'Python is still missing. Install it from https://www.python.org/downloads/ (tick "Add python.exe to PATH"), then run this again.' -ForegroundColor Red
-        exit 1
+$pyExe = $null; $pyArgs = @()
+if (Test-Python 'py' @('-3')) { $pyExe = 'py'; $pyArgs = @('-3') }
+elseif (Test-Python 'python' @()) { $pyExe = 'python' }
+else {
+    Info 'Python 3.9 or newer was not found.'
+    if (Winget 'Python.Python.3.12' 'Python 3.12') {
+        if (Test-Python 'py' @('-3')) { $pyExe = 'py'; $pyArgs = @('-3') }
+        elseif (Test-Python 'python' @()) { $pyExe = 'python' }
     }
 }
-$pythonArgs = @($python | Select-Object -Skip 1)
-function Py { & $python[0] @pythonArgs @args }
-Info "Found: $(Py --version)"
+if (-not $pyExe) {
+    Write-Host '      Python is missing. Install it from https://www.python.org/downloads/ (tick "Add python.exe to PATH"), then run this again.' -ForegroundColor Red
+    Stop-Transcript | Out-Null
+    exit 1
+}
+function Py { & $pyExe @pyArgs @args }
+Info "Using: $(Py --version 2>&1) ($pyExe $pyArgs)"
 
-# 2. Windows' own certificate checks for the university servers (avoids SSLCertVerificationError).
-Step 'Certificate checks (truststore)'
-Py -c "import truststore" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Info 'Installing truststore, so Python uses Windows certificate checks for imap.uoa.gr and eClass...'
-    Py -m pip install --user --disable-pip-version-check truststore
-} else { Info 'Already installed.' }
-
-# 3. Projects: git and the GitHub CLI.
-Step 'Projects: Git and GitHub CLI'
-if ((Have git) -and (Have gh)) { Info 'Already installed.' }
-if (-not ((Have git) -and (Have gh)) -and (Ask 'Projects need Git and the GitHub CLI. Install them?')) {
-    if (-not (Have git)) { Winget 'Git.Git' | Out-Null }
-    if (-not (Have gh)) { Winget 'GitHub.cli' | Out-Null }
+# 2. truststore: Windows' own certificate checks for the university servers
+Step 'Certificate checks for the university servers (truststore)'
+Py -c "import truststore" *> $null
+if ($LASTEXITCODE -eq 0) { Info 'Already installed.' }
+else {
+    Py -m pip install --user --disable-pip-version-check --quiet truststore
+    Py -c "import truststore" *> $null
+    if ($LASTEXITCODE -eq 0) { Info 'Installed.' } else { Warn 'truststore could not be installed (mail may show certificate errors).' }
 }
 
-# 4. Documents and PDFs.
-Step 'Documents: LibreOffice, Ghostscript, Poppler'
-$soffice = Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe"
-if ($soffice) { Info 'LibreOffice is already installed.' }
-if (-not $soffice -and (Ask 'LibreOffice converts Word to PDF and previews Office files (about 350 MB). Install it?')) {
-    Winget 'TheDocumentFoundation.LibreOffice' | Out-Null
-}
-if (Ask 'Ghostscript and Poppler compress, merge and split PDFs. Try to install them with winget?' $false) {
-    if (-not (Winget 'ArtifexSoftware.GhostScript')) { Write-Host 'Get Ghostscript from https://ghostscript.com/releases/' }
-    if (-not (Winget 'oschwartz10612.Poppler')) { Write-Host 'Get Poppler for Windows and add its Library\bin folder to PATH.' }
+# 3-4. Projects
+Step 'Git'
+if (Have git) { Info "Already installed: $((Get-Command git).Source)" } else { Winget 'Git.Git' 'Git' | Out-Null }
+Step 'GitHub CLI'
+if (Have gh) { Info "Already installed: $((Get-Command gh).Source)" } else { Winget 'GitHub.cli' 'GitHub CLI' | Out-Null }
+
+# 5. Documents and PDFs
+Step 'LibreOffice, Ghostscript and Poppler (Word to PDF, PDF tools)'
+if (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe") { Info 'LibreOffice is already installed.' }
+else { Winget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' | Out-Null }
+if ((Have gswin64c) -or (Test-Path "$env:ProgramFiles\gs")) { Info 'Ghostscript is already installed.' }
+else { Winget 'ArtifexSoftware.GhostScript' 'Ghostscript' | Out-Null }
+if (Have pdfinfo) { Info 'Poppler is already installed.' }
+elseif (Winget 'oschwartz10612.Poppler' 'Poppler') {
+    $poppler = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter pdfinfo.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($poppler) { Add-UserPath $poppler.DirectoryName; Info "Poppler added to PATH: $($poppler.DirectoryName)" }
 }
 
-# 5. An AI CLI for the assistant, the AI tools and the lecture summaries.
-Step 'AI CLI and sign-in'
+# 6. Claude Code
+Step 'Claude Code (the AI used by the assistant and AI tools)'
 $localBin = Join-Path $env:USERPROFILE '.local\bin'
-if (Test-Path (Join-Path $localBin 'claude.exe')) { Add-UserPath $localBin }
-if ((Have claude) -or (Have codex) -or (Have gemini)) { Info 'An AI CLI is already installed.' }
-if (-not ((Have claude) -or (Have codex) -or (Have gemini))) {
-    Info 'AI CLI (the assistant and AI tools use your own account through it)'
-    Write-Host '  1) Claude Code   2) ChatGPT Codex   3) Gemini   4) skip'
-    $choice = if ($Yes) { '1' } else { Read-Host 'Choose [1]' }
-    if (-not $choice) { $choice = '1' }
-    $ai = $null
-    switch ($choice) {
-        '1' { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression; Add-UserPath $localBin; $ai = 'claude' }
-        { $_ -in '2', '3' } {
-            if (-not (Have npm)) { Winget 'OpenJS.NodeJS.LTS' | Out-Null }
-            if ($choice -eq '2') { npm install -g @openai/codex; $ai = 'codex' } else { npm install -g @google/gemini-cli; $ai = 'gemini' }
-            Refresh-Path
-        }
-    }
-    if ($ai -and (Have $ai) -and -not $Yes -and (Ask "Sign in to $ai now? (Type /exit when you're done.)")) {
-        if ($ai -eq 'codex') { codex login } else { & $ai }
-    }
+if (-not (Test-Path (Join-Path $localBin 'claude.exe')) -and -not (Have claude)) {
+    Info 'Downloading the official Claude Code installer...'
+    try { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression }
+    catch { Warn "Claude Code could not be installed: $($_.Exception.Message)" }
 }
-if ((Have gh) -and -not $Yes) {
-    gh auth status *> $null
-    if ($LASTEXITCODE -ne 0 -and (Ask 'Sign in to GitHub for Projects now?')) { gh auth login }
-}
+if (Test-Path (Join-Path $localBin 'claude.exe')) { Add-UserPath $localBin; Info "Claude Code: $localBin\claude.exe" }
+elseif (Have claude) { Info "Claude Code: $((Get-Command claude).Source)" }
 
-# 6. Whisper for lecture subtitles on this computer (optional; a free Groq key also works).
-Step 'Whisper for lecture subtitles (optional)'
-$whisper = Join-Path $env:LOCALAPPDATA 'student-hub\whisper'
-if (-not (Test-Path (Join-Path $whisper 'Scripts\python.exe')) -and (Ask 'Install Whisper for lecture subtitles on this computer (about 1 GB with the model)?' $false)) {
-    Py -m venv $whisper
-    & (Join-Path $whisper 'Scripts\python.exe') -m pip install faster-whisper
+# 7. Whisper (only with -Whisper)
+Step 'Whisper for lecture subtitles'
+$whisperDir = Join-Path $env:LOCALAPPDATA 'student-hub\whisper'
+if (Test-Path (Join-Path $whisperDir 'Scripts\python.exe')) { Info 'Already installed.' }
+elseif ($Whisper) {
+    Info 'Installing faster-whisper (a few minutes)...'
+    Py -m venv $whisperDir
+    & (Join-Path $whisperDir 'Scripts\python.exe') -m pip install --disable-pip-version-check --quiet faster-whisper
+    if ($LASTEXITCODE -ne 0) { Warn 'Whisper could not be installed.' }
 }
+else { Info 'Skipped (optional). Run install-windows.bat -Whisper to add it, or use a free Groq key in the app.' }
 
-# 7. A desktop shortcut that starts the app.
+# 8. Desktop shortcut
 Step 'Desktop shortcut'
-$shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Student Hub.lnk'
-$link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-$link.TargetPath = Join-Path $PSScriptRoot 'start-windows.bat'
-$link.WorkingDirectory = $PSScriptRoot
-$link.Description = 'Student Hub'
-$link.Save()
-Write-Host "Added a 'Student Hub' shortcut to your desktop (or double-click start-windows.bat)."
+try {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'Student Hub.lnk'))
+    $link.TargetPath = Join-Path $PSScriptRoot 'start-windows.bat'
+    $link.WorkingDirectory = $PSScriptRoot
+    $link.Description = 'Student Hub'
+    $link.Save()
+    Info "Created 'Student Hub' on your desktop."
+} catch { Warn "No desktop shortcut: $($_.Exception.Message). Use start-windows.bat instead." }
 
-# 8. The setup check.
+# 9. Setup check
 Step 'Setup check'
 Py -X utf8 server.py --check
-$code = $LASTEXITCODE
+$checkFailed = $LASTEXITCODE -ne 0
+
 Stop-Transcript | Out-Null
-if ($code -ne 0) { Write-Host "`nFix the parts marked !! and run the installer again." -ForegroundColor Yellow; exit 1 }
-Write-Host "`nDone. Start Student Hub with the shortcut on your desktop." -ForegroundColor Green
+Write-Host ''
+if ($checkFailed) {
+    Write-Host 'Some required parts are missing (marked !! above). Send install-log.txt if you need help.' -ForegroundColor Red
+    exit 1
+}
+if ($script:problems.Count) {
+    Write-Host 'Installed, with these optional parts missing:' -ForegroundColor Yellow
+    $script:problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+}
+Write-Host 'Student Hub is installed. Start it with the Student Hub shortcut on your desktop.' -ForegroundColor Green
+
+# Sign-in needs you, so it opens in its own windows (the installer doesn't wait for it).
+if (-not $NoSignIn) {
+    $claude = if (Test-Path (Join-Path $localBin 'claude.exe')) { Join-Path $localBin 'claude.exe' } elseif (Have claude) { (Get-Command claude).Source }
+    if ($claude) {
+        Write-Host 'Opening Claude to sign in (once). Follow the link it shows, then type /exit.'
+        Start-Process powershell -ArgumentList '-NoExit', '-Command', "& '$claude'"
+    }
+    if (Have gh) {
+        gh auth status *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Opening GitHub sign-in (for Projects).'
+            Start-Process powershell -ArgumentList '-NoExit', '-Command', 'gh auth login'
+        }
+    }
+}
+exit 0
