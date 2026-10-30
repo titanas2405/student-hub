@@ -18,23 +18,27 @@ Then open http://127.0.0.1:8765. The app itself needs only Python 3.9+ (standard
 optional features. The sign-in page has a **setup check** that shows what is installed, what each missing part is
 for and the command to add it; `python3 server.py --check` prints the same in a terminal.
 
-### Docker (optional)
+### Docker: everything in one container
 
-```
-docker compose up -d --build
-docker compose exec -it student-hub claude          # sign in to the AI CLI once
-docker compose exec -it student-hub gh auth login   # for Projects
-```
-Then open http://127.0.0.1:8765. The image has Python, LibreOffice, Ghostscript, Poppler, git, gh and Claude Code,
-for **linux/amd64 and linux/arm64** (Intel/AMD PCs, Apple Silicon, ARM laptops, Raspberry Pi 4/5), so it behaves the
-same on Windows, macOS and Linux (with Docker Desktop on Windows/macOS). Settings and logins are kept in the
-`student-hub-home` volume; project folders are in `./projects` (or set `STUDENT_HUB_PROJECTS` to another folder).
-Build options are in `docker-compose.yml` (`WITH_WHISPER: "1"` for local subtitles, `AI_CLI: none`).
+Docker downloads and sets up everything inside a container, the same way on Windows, macOS and Linux, on
+**linux/amd64 and linux/arm64** (Intel/AMD PCs, Apple Silicon, ARM laptops, Raspberry Pi 4/5): Python, LibreOffice,
+Ghostscript, Poppler, git, gh, Whisper and the Claude Code, ChatGPT Codex and Gemini CLIs (about 2.5 GB; the first
+build takes 10-20 minutes).
+
+| | Start | Sign in once (AI CLIs, GitHub) |
+|---|---|---|
+| **Windows** | double-click `docker-start.bat` (installs Docker Desktop with winget if it's missing) | `docker-signin.bat` |
+| **Linux / macOS** | `./docker-start.sh` | `./docker-signin.sh` |
+
+Then open http://127.0.0.1:8765. The container keeps running in the background; stop it with `docker compose down`.
+Settings, logins and the Whisper model are kept in the `student-hub-home` volume; project folders are in
+`./projects` (or set `STUDENT_HUB_PROJECTS` to another folder). To build a smaller image, change the build options in
+`docker-compose.yml` (`WITH_WHISPER: "0"`, `AI_CLI: claude`, `WITH_LIBREOFFICE: "0"`).
 
 What works differently in Docker: *Open in IDE* can't start an editor on your computer (open the project folder
 yourself), the assistant's project commands run in the container's Linux rather than on your system, Whisper can't
-use the GPU, and the app must stay on port 8765 on both sides (it checks the address it is opened at). The normal
-install above has none of these limits, so it is the recommended way.
+use the GPU, and the app must stay on port 8765 on both sides (it checks the address it is opened at). Docker Desktop on Windows needs
+WSL 2 (it sets it up, with a restart) and virtualization enabled in the BIOS.
 
 ### Windows
 

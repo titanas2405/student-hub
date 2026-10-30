@@ -9,6 +9,7 @@ on:
       - "Dockerfile"
       - "docker-compose.yml"
       - ".dockerignore"
+      - "docker-*"
       - "server.py"
       - ".github/workflows/install.yml"
   workflow_dispatch:
@@ -43,7 +44,7 @@ jobs:
       - name: Batch files have Windows line endings
         shell: pwsh
         run: |
-          foreach ($f in 'install-windows.bat', 'start-windows.bat', 'install-windows.ps1') {
+          foreach ($f in 'install-windows.bat', 'start-windows.bat', 'install-windows.ps1', 'docker-start.bat', 'docker-signin.bat') {
             $bytes = [IO.File]::ReadAllBytes("$PWD\$f")
             $lf = ($bytes | Where-Object { $_ -eq 10 }).Count; $crlf = 0
             for ($i = 1; $i -lt $bytes.Length; $i++) { if ($bytes[$i] -eq 10 -and $bytes[$i - 1] -eq 13) { $crlf++ } }
@@ -72,8 +73,9 @@ jobs:
           ok = {r['name']: r['ok'] for r in d['rows']}
           print(ok)
           assert d['docker'], 'not running as the Docker build'
-          for name in ('Python', 'git', 'GitHub CLI', 'LibreOffice', 'Ghostscript', 'Poppler', 'Claude'):
+          for name in ('Python', 'git', 'GitHub CLI', 'LibreOffice', 'Ghostscript', 'Poppler', 'Claude', 'ChatGPT (Codex CLI)', 'Gemini', 'Whisper'):
               assert ok.get(name), name + ' missing in the image'
           "
+          docker exec hub /opt/whisper/bin/python -c "import faster_whisper, av, numpy"
           docker exec hub python server.py --check || true
           docker logs hub

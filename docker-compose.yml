@@ -1,15 +1,13 @@
 # docker compose up -d --build      then open http://127.0.0.1:8765
-# Sign in to the AI CLI and GitHub once:
-#   docker compose exec -it student-hub claude
-#   docker compose exec -it student-hub gh auth login
+# Or double-click docker-start.bat (Windows) / run ./docker-start.sh. Sign in once with docker-signin.bat / .sh.
 services:
   student-hub:
     build:
       context: .
       args:
         WITH_LIBREOFFICE: "1"     # Word -> PDF and Office previews (about 400 MB)
-        WITH_WHISPER: "0"         # "1": lecture subtitles on this computer (about 1 GB with the model)
-        AI_CLI: claude            # "claude" or "none"
+        WITH_WHISPER: "1"         # lecture subtitles on this computer ("0" saves about 700 MB)
+        AI_CLI: all               # Claude Code, ChatGPT Codex and Gemini; or "claude", or "none"
     image: student-hub
     # Only this computer can open the app. Keep 8765 on both sides: the app checks the address it is opened at.
     ports:
