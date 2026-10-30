@@ -15,7 +15,7 @@ SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "requi
 
 class CLITests(unittest.TestCase):
     def run_fake(self, provider, answer='{"answer":"Ελληνικά"}', schema=SCHEMA, error=None, content=None,
-                 model='', effort=''):
+                 model='', effort='', web_search=False):
         proc = Mock(returncode=1 if error else 0)
         captured = {}
         def launch(args, **kwargs):
@@ -33,7 +33,8 @@ class CLITests(unittest.TestCase):
             return proc
         with patch.object(ai_cli, 'available', return_value=True), patch.object(ai_cli.subprocess, 'Popen', side_effect=launch):
             result = ai_cli.run(content or [{'type': 'text', 'text': 'Explain this lecture'}],
-                                {'provider': provider, 'model': model, 'effort': effort}, schema=schema)
+                                {'provider': provider, 'model': model, 'effort': effort,
+                                 'allow_web_search': web_search}, schema=schema)
         return result, captured
 
     def test_codex_schema_stdin_images_and_isolation(self):
@@ -47,6 +48,17 @@ class CLITests(unittest.TestCase):
         self.assertIn('features.shell_tool=false', call['args'])
         self.assertIn('Frame F01', call['prompt'])
         self.assertFalse(Path(call['cwd']).exists())
+
+    def test_gpt_6_luna_gets_web_search_but_not_local_tools(self):
+        _, call = self.run_fake('chatgpt', schema=None, model='gpt-6-luna', web_search=True)
+        self.assertIn('web_search="live"', call['args'])
+        self.assertIn('features.shell_tool=false', call['args'])
+        self.assertIn('features.apps=false', call['args'])
+        self.assertIn('Use public web search', call['prompt'])
+        _, other = self.run_fake('chatgpt', schema=None, model='gpt-6-sol', web_search=True)
+        self.assertIn('web_search="disabled"', other['args'])
+        _, disabled = self.run_fake('chatgpt', schema=None, model='gpt-6-luna')
+        self.assertIn('web_search="disabled"', disabled['args'])
 
     def test_gemini_json_envelope_and_images(self):
         result, call = self.run_fake('gemini', content=[{'type': 'text', 'text': 'Frame F01'},

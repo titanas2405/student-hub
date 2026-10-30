@@ -168,7 +168,11 @@ can reject a level it does not support.
 
 Text and lecture images are sent to the selected provider under your CLI account.
 Codex runs with a private temporary working directory, a read-only sandbox,
-ephemeral sessions, shell tools and user-config integrations disabled. Gemini runs
+ephemeral sessions, shell tools and user-config integrations disabled. In the **AI
+assistant panel**, **GPT-6 Luna** also gets public web search and the assistant's
+app-controlled, read-only student-data retrieval. Web search is used only for
+general public facts, never private student data. No shell or arbitrary local-file
+access is enabled. Gemini runs
 headlessly with built-in tools, extensions and MCP integrations disabled; lecture
 images are attached using explicit file references. Antigravity runs in its CLI
 sandbox, receives only the supplied context and explicit image paths, and can

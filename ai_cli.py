@@ -90,6 +90,11 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
                 elif provider == "antigravity":
                     pieces.append(f"[Attached image file: {path}]")
         prompt = "\n\n".join(pieces)
+        luna_web_tools = (provider == "chatgpt" and settings.get("model") == "gpt-6-luna"
+                          and settings.get("allow_web_search") is True)
+        if luna_web_tools:
+            prompt += ("\n\nUse public web search when current public facts would materially improve the answer. "
+                       "Do not use local shell commands or search for private student data.")
         if schema and provider != "antigravity":
             prompt += "\n\nReturn ONLY a JSON object matching this schema, without Markdown fences:\n" + json.dumps(schema)
         if provider == "gemini":
@@ -104,7 +109,7 @@ def run(content, settings, schema=None, on_text=None, on_proc=None, timeout=900)
                     "-c", 'approval_policy="never"', "-c", "features.shell_tool=false",
                     "-c", "features.apply_patch=false", "-c", "features.multi_agent=false",
                     "-c", "features.apps=false", "-c", "features.hooks=false",
-                    "-c", 'web_search="disabled"',
+                    "-c", 'web_search="live"' if luna_web_tools else 'web_search="disabled"',
                     "-o", str(output)]
             if settings.get("effort"):
                 args += ["-c", 'model_reasoning_effort=' + json.dumps(settings["effort"])]
