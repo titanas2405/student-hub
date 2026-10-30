@@ -19,6 +19,13 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
    (`winget install OpenJS.NodeJS.LTS`): `npm install -g @anthropic-ai/claude-code`, `@google/gemini-cli` or `@openai/codex`,
    then sign in once in a terminal. LibreOffice and Ghostscript are found in `Program Files` even if they aren't on PATH.
 
+**Certificate errors on Windows** (e.g. *SSLCertVerificationError* for imap.uoa.gr): Python reads the Windows
+certificate store, and Windows only downloads a root certificate the first time Windows itself needs it, so Greek
+academic (HARICA) servers can be rejected. `start-windows.bat` installs `truststore`, which makes Python use Windows'
+own certificate checks; without it, Student Hub asks Windows to check the server once (which fetches the root) and
+retries. If it still fails, the message says why: antivirus "scan encrypted connections / mail shield" replacing
+certificates, or a wrong date/time. Certificate checks are never turned off.
+
 To check the setup any time: `py -3 server.py --check` (or `python3 server.py --check` on macOS/Linux). Settings and cached
 files are stored under `%APPDATA%\student-hub` and `%LOCALAPPDATA%\student-hub`.
 Google Antigravity, Gemini and other AI CLIs must be installed and signed in on

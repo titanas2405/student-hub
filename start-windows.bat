@@ -10,6 +10,10 @@ if not defined PY (
   pause
   exit /b 1
 )
+%PY% -c "import truststore" >nul 2>nul || (
+  echo Installing truststore, so Python uses Windows certificate checks for the university servers...
+  %PY% -m pip install --user --disable-pip-version-check truststore
+)
 %PY% -X utf8 server.py --check
 if errorlevel 1 (
   echo.

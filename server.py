@@ -34,6 +34,8 @@ import ai_cli
 import student_assistant
 import project_humanizer
 import project_access
+import tls_setup
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -87,7 +89,20 @@ MAX_BODY = 1 << 20              # largest JSON request we accept
 MAX_FEED = 3 << 20              # largest feed we download
 NET_TIMEOUT = 15
 
-TLS = ssl.create_default_context()
+TLS, TLS_KIND = tls_setup.make_context()     # Windows' own checks if truststore is installed
+
+
+
+class HubHTTPSHandler(urllib.request.HTTPSHandler):
+    """HTTPS that, after a certificate error on Windows, lets Windows fetch the missing root and tries once more."""
+    def https_open(self, req):
+        try:
+            return super().https_open(req)
+        except urllib.error.URLError as e:
+            host, _, port = (req.host or "").partition(":")
+            if tls_setup.is_cert_error(e) and tls_setup.recover(TLS, host, int(port or 443)):
+                return super().https_open(req)
+            raise
 
 
 # ---------------------------------------------------------------- config ---
@@ -278,14 +293,23 @@ class MailAccount:
         self.all_folders = set()
 
     # connection management
+    def _open(self):
+        host, port, implicit = self.imap
+        if implicit:
+            return imaplib.IMAP4_SSL(host, port, ssl_context=TLS, timeout=NET_TIMEOUT)
+        c = imaplib.IMAP4(host, port, timeout=NET_TIMEOUT)
+        c.starttls(ssl_context=TLS)       # never send a password in clear text
+        return c
+
     def _connect(self):
         host, port, implicit = self.imap
         try:
-            if implicit:
-                c = imaplib.IMAP4_SSL(host, port, ssl_context=TLS, timeout=NET_TIMEOUT)
-            else:
-                c = imaplib.IMAP4(host, port, timeout=NET_TIMEOUT)
-                c.starttls(ssl_context=TLS)       # never send a password in clear text
+            try:
+                c = self._open()
+            except ssl.SSLCertVerificationError:
+                if not tls_setup.recover(TLS, host, port):      # Windows may only lack the root certificate
+                    raise
+                c = self._open()
             for i, name in enumerate(self.login_names):
                 try:
                     _imap_login(c, name, self.password)
@@ -298,6 +322,8 @@ class MailAccount:
         except imaplib.IMAP4.error:
             raise ApiError(401, "Wrong username or password. Use the same login as webmail "
                                 "(e.g. sdi2300000).")
+        except ssl.SSLCertVerificationError as e:
+            raise ApiError(502, tls_setup.explain(e, host))
         except (OSError, ssl.SSLError) as e:
             raise ApiError(502, f"Could not reach mail server {host}:{port} ({e.__class__.__name__})")
         self.conn = c
@@ -513,14 +539,22 @@ class MailAccount:
         msg.set_content(body or "")
 
         host, port, implicit = self.smtp
-        try:
+
+        def connect():
             if implicit:
-                s = smtplib.SMTP_SSL(host, port, context=TLS, timeout=NET_TIMEOUT)
-            else:
-                s = smtplib.SMTP(host, port, timeout=NET_TIMEOUT)
-                s.ehlo()
-                s.starttls(context=TLS)
-                s.ehlo()
+                return smtplib.SMTP_SSL(host, port, context=TLS, timeout=NET_TIMEOUT)
+            s = smtplib.SMTP(host, port, timeout=NET_TIMEOUT)
+            s.ehlo()
+            s.starttls(context=TLS)
+            s.ehlo()
+            return s
+        try:
+            try:
+                s = connect()
+            except ssl.SSLCertVerificationError:
+                if not tls_setup.recover(TLS, host, port):
+                    raise
+                s = connect()
             with s:
                 _smtp_login(s, self.username, self.password)
                 s.send_message(msg, to_addrs=to_list + cc_list)
@@ -528,6 +562,8 @@ class MailAccount:
             raise ApiError(401, "Outgoing server rejected your credentials")
         except smtplib.SMTPRecipientsRefused:
             raise ApiError(400, "Server refused one or more recipients")
+        except ssl.SSLCertVerificationError as e:
+            raise ApiError(502, tls_setup.explain(e, host))
         except (smtplib.SMTPException, OSError, ssl.SSLError) as e:
             raise ApiError(502, f"Could not send ({e.__class__.__name__})")
 
@@ -564,7 +600,7 @@ class CasSession:
         self.username, self.password = username.split("@")[0], password
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
-            _SafeRedirect, urllib.request.HTTPSHandler(context=TLS), urllib.request.HTTPCookieProcessor(self.jar))
+            _SafeRedirect, HubHTTPSHandler(context=TLS), urllib.request.HTTPCookieProcessor(self.jar))
         self.lock = threading.Lock()
         self.posts = 0                  # password posts so far (for tests / diagnostics)
 
@@ -707,7 +743,7 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_opener = urllib.request.build_opener(_SafeRedirect, urllib.request.HTTPSHandler(context=TLS))
+_opener = urllib.request.build_opener(_SafeRedirect, HubHTTPSHandler(context=TLS))
 
 
 def check_feed_url(url):
@@ -2318,7 +2354,7 @@ class _HttpsOnly(_SafeRedirect):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_uniflix_opener = urllib.request.build_opener(_HttpsOnly, urllib.request.HTTPSHandler(context=TLS))
+_uniflix_opener = urllib.request.build_opener(_HttpsOnly, HubHTTPSHandler(context=TLS))
 
 
 def uniflix_get(path):
@@ -4488,7 +4524,7 @@ class PiazzaClient:
     def __init__(self):
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(_PiazzaRedirect,
-            urllib.request.HTTPSHandler(context=TLS), urllib.request.HTTPCookieProcessor(self.jar))
+            HubHTTPSHandler(context=TLS), urllib.request.HTTPCookieProcessor(self.jar))
         self.lock = threading.RLock()
         self.classes = []
         self.cache = {}
@@ -6687,6 +6723,32 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"items": items, "errors": errors})
 
 
+def tls_hosts():
+    """The mail server in the settings, or the university defaults."""
+    cfg = load_config()
+    hosts = []
+    imap = urllib.parse.urlsplit(cfg.get("imap_url") or "imaps://imap.uoa.gr:993")
+    if imap.scheme == "imaps" and imap.hostname:
+        hosts.append((imap.hostname, imap.port or 993))
+    hosts.append(("eclass.unipi.gr" if cfg.get("institution") == "unipi" else "eclass.uoa.gr", 443))
+    return hosts
+
+
+def tls_probe(host, port):
+    """Connects with TLS like the app does (letting Windows fetch a missing root once). (ok, detail)."""
+    for attempt in (1, 2):
+        try:
+            with socket.create_connection((host, port), timeout=8) as raw, TLS.wrap_socket(raw, server_hostname=host):
+                return True, "certificate verified"
+        except ssl.SSLCertVerificationError as e:
+            if attempt == 1 and tls_setup.recover(TLS, host, port):
+                continue
+            return False, tls_setup.explain(e, host)
+        except OSError as e:
+            return False, f"not reachable ({e.__class__.__name__}); check the internet connection"
+    return False, "not verified"
+
+
 def setup_check():
     """`server.py --check`: what is installed, what each optional part enables and how to add what's missing."""
     win = os.name == "nt"
@@ -6737,6 +6799,12 @@ def setup_check():
             npm[key] + (" (needs Node.js: winget install OpenJS.NodeJS.LTS)" if win and key != "antigravity" else "") + ", then sign in once in a terminal")
     row(WHISPER_PY.exists(), "Whisper", str(WHISPER_PY) if WHISPER_PY.exists() else "not installed (local lecture subtitles; a Groq key also works)",
         "see 'Subtitles' in the README")
+    row(TLS_KIND == "truststore" or not win, "Certificate checks",
+        "Windows' own (truststore)" if TLS_KIND == "truststore" else "Python's" + (" (reads the Windows store)" if win else ""),
+        "optional, avoids certificate errors with university servers: py -3 -m pip install truststore")
+    for host, port in tls_hosts():
+        ok, detail = tls_probe(host, port)
+        row(ok, f"TLS {host}:{port}", detail)
     print("Student Hub setup check\n" + "\n".join(rows))
     print("\nRequired parts are fine." if not problems else f"\n{problems} required part(s) need fixing (marked !!).")
     if not ai_any:
