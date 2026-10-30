@@ -37,7 +37,12 @@ def archive(entries):
     output = io.BytesIO()
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         for name, data in entries:
-            z.writestr(name, data)
+            info = zipfile.ZipInfo(name)
+            info.filename = name     # keep the name exactly: on Windows ZipInfo would turn "a\\b" into "a/b"
+            if name.endswith('/'):
+                info.external_attr = 0o40775 << 16 | 0x10
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, data)
     return output.getvalue()
 
 
