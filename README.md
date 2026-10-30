@@ -7,6 +7,12 @@ python3 server.py
 ```
 Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard library only).
 
+On Windows, install Python 3.9 or newer, open PowerShell in the project folder,
+and run `py -3 server.py`; then open http://127.0.0.1:8765. Settings and cached
+files are stored under `%APPDATA%\student-hub` and `%LOCALAPPDATA%\student-hub`.
+Google Antigravity, Gemini and other AI CLIs must be installed and signed in on
+Windows separately; see **Choosing an AI CLI** below.
+
 - **Εργαλεία · Tools**: six subtabs keep related tools together. The selected subtab is remembered for this browser tab; switching categories keeps selected files, text and the running study timer.
   - **Documents**: Word (.doc/.docx/.odt) → PDF (20 MB; LibreOffice), PDF compression with three quality presets (Ghostscript), and PDF merge/page extraction (Poppler). Merge order can be changed; page selections such as `3, 1-2` preserve your requested order. PDF tools accept up to 50 MB and 300 pages total. Compression can change image quality and invalidates digital signatures.
   - **Images**: PNG/JPG/WebP conversion, image compression with quality and resizing controls, and images → PDF (up to 20 images / 50 MB, reorderable, one A4 page per image). These run in your browser.
@@ -39,6 +45,13 @@ Then open http://127.0.0.1:8765. Nothing to install (Python 3.9+ standard librar
   python3 -m venv ~/.local/share/student-hub/whisper
   ~/.local/share/student-hub/whisper/bin/pip install faster-whisper
   ```
+  On Windows PowerShell, install Whisper in the app's local data directory:
+  ```powershell
+  $whisper = Join-Path $env:LOCALAPPDATA 'student-hub\whisper'
+  py -3 -m venv $whisper
+  & (Join-Path $whisper 'Scripts\python.exe') -m pip install faster-whisper
+  ```
+  The app uses this Windows virtual environment automatically.
   (The first run downloads the model, about 480 MB for `small`.)
   **Faster with Groq (optional, free):** create a key at [console.groq.com/keys](https://console.groq.com/keys) and paste it in the player's *AI καθηγητής* panel. Transcription then runs on Groq's servers with Whisper large, so a two-hour lecture takes a few minutes and the result is more accurate. The lecture's audio is sent to Groq. The free tier has limits of roughly 2 hours of audio per hour and 8 per day. For the hourly limit the app waits up to 20 minutes. When the daily limit is reached, it carries on with Whisper on this computer. The key is saved in `~/.config/student-hub/groq-key`, readable only by you, and is never sent back to the page. `GROQ_API_KEY` in the environment works too.
 - **AI καθηγητής (Claude / Gemini / ChatGPT / Antigravity)**: in the player, *✦ AI καθηγητής* opens a panel with two tabs.

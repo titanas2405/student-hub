@@ -75,9 +75,14 @@ class CLITests(unittest.TestCase):
         self.assertIn('Attached image file:', call['args'][call['args'].index('-p') + 1])
 
     def test_antigravity_finds_official_local_install_and_override(self):
-        with patch.object(ai_cli.shutil, 'which', return_value=None), \
-             patch.object(ai_cli.Path, 'home', return_value=Path('/home/student')):
-            self.assertEqual(ai_cli.binary('antigravity'), '/home/student/.local/bin/agy')
+        with patch.object(ai_cli.shutil, 'which', return_value=None):
+            if ai_cli.os.name == 'nt':
+                local = Path(ai_cli.os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
+                with patch.dict(ai_cli.os.environ, {'LOCALAPPDATA': str(local)}):
+                    self.assertEqual(ai_cli.binary('antigravity'), str(local / 'agy' / 'bin' / 'agy.exe'))
+            else:
+                with patch.object(ai_cli.Path, 'home', return_value=Path('/home/student')):
+                    self.assertEqual(ai_cli.binary('antigravity'), '/home/student/.local/bin/agy')
         with patch.dict(ai_cli.os.environ, {'STUDENT_HUB_AGY': '/opt/google/agy'}):
             self.assertEqual(ai_cli.binary('antigravity'), '/opt/google/agy')
 

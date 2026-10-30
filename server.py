@@ -48,7 +48,21 @@ HOST = "127.0.0.1"
 PORT = int(os.environ.get("STUDENT_HUB_PORT", "8765"))
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "student-hub"
+
+
+def app_data_dir(kind):
+    """Return the platform's normal per-user config, cache, or data directory."""
+    xdg = {"config": "XDG_CONFIG_HOME", "cache": "XDG_CACHE_HOME", "data": "XDG_DATA_HOME"}[kind]
+    if os.environ.get(xdg):
+        return Path(os.environ[xdg])
+    if os.name == "nt":
+        fallback = Path.home() / "AppData" / ("Roaming" if kind == "config" else "Local")
+        base = os.environ.get("APPDATA" if kind == "config" else "LOCALAPPDATA")
+        return Path(base) if base else fallback
+    return Path.home() / {"config": ".config", "cache": ".cache", "data": ".local/share"}[kind]
+
+
+CONFIG_DIR = app_data_dir("config") / "student-hub"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 BROWSER_SSO_TTL = 6 * 3600     # assume the browser's university SSO cookie lasts this long
@@ -2452,9 +2466,10 @@ def _uniflix_video(lecture_id):
 
 # Subtitles: generated on this computer with Whisper (faster-whisper in its own environment, so the app itself
 # stays on the standard library). One lecture at a time, saved as WebVTT so each lecture is transcribed once.
-SUBS_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "student-hub" / "subtitles"
-WHISPER_PY = Path(os.environ.get("STUDENT_HUB_WHISPER",
-                                 Path.home() / ".local" / "share" / "student-hub" / "whisper" / "bin" / "python"))
+SUBS_DIR = app_data_dir("cache") / "student-hub" / "subtitles"
+_whisper_default = (app_data_dir("data") / "student-hub" / "whisper" /
+                    ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+WHISPER_PY = Path(os.environ.get("STUDENT_HUB_WHISPER", _whisper_default))
 SUBS_WORKER = ROOT / "subtitles_worker.py"
 SUBS_MODELS = {"accurate": "small", "fast": "base"}
 GROQ_KEY_FILE = CONFIG_DIR / "groq-key"
@@ -2676,7 +2691,7 @@ class Subtitles:
 # switched off: it only reads what it is sent. The lecture is summarized part by part (about 10 minutes each) as
 # soon as each part is transcribed, so the first parts show up long before the whole lecture is done.
 INSTRUCTOR_DIR = SUBS_DIR.parent / "instructor"
-CLAUDE_BIN = shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+CLAUDE_BIN = ai_cli.binary("claude")
 CLAUDE_TIMEOUT = 15 * 60
 FRAME_ID_RE = re.compile(r"F\d{2,3}")
 AI_MODELS = ("", "fable", "opus", "sonnet", "haiku")          # "" = the default of the student's Claude account
@@ -3725,17 +3740,25 @@ def readme_for(p):
 
 
 def launch_ide(ide_id, path):
+    path = Path(path)
+    if os.name == "nt" and ide_id == "files":
+        try:
+            os.startfile(str(path))
+            return
+        except OSError as e:
+            raise ApiError(501, f"Δεν άνοιξε ο φάκελος: {e}") from None
     cmd = ide_command(ide_id) or ide_command("files")
     if not cmd:
         raise ApiError(501, "Δεν βρέθηκε IDE")
+    options = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     subprocess.Popen([cmd, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, cwd=str(path))
+                     cwd=str(path), **options)
 
 
 # Exam study mode: flashcard decks per course, written by Claude from the course's lecture summaries (or
 # transcripts), its eClass documents and the student's notes. Each deck remembers which sources its cards came
 # from (and which couldn't be read). Kept in ~/.local/share/student-hub/study/.
-STUDY_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "student-hub" / "study"
+STUDY_DIR = app_data_dir("data") / "student-hub" / "study"
 PDFTOTEXT = shutil.which("pdftotext")
 _study_lock = threading.Lock()
 CARD_KINDS = ["definition", "concept", "question", "formula", "code", "problem"]

@@ -18,7 +18,13 @@ class ToolError(Exception):
 
 
 def capabilities():
-    return {name: bool(shutil.which(name)) for name in ('gs', 'pdfunite', 'pdfseparate', 'pdfinfo')}
+    return {"gs": bool(ghostscript()), **{name: bool(shutil.which(name))
+            for name in ('pdfunite', 'pdfseparate', 'pdfinfo')}}
+
+
+def ghostscript():
+    """Find Ghostscript under its Unix or Windows executable name."""
+    return next((shutil.which(name) for name in ("gs", "gswin64c", "gswin32c") if shutil.which(name)), None)
 
 
 def run(args, timeout=90):
@@ -141,7 +147,7 @@ def process(operation, files, fields):
             preset = fields.get('quality', 'ebook')
             if preset not in ('screen', 'ebook', 'printer'):
                 raise ToolError('Invalid compression quality', 400)
-            run(['gs', '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-sDEVICE=pdfwrite',
+            run([ghostscript(), '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-sDEVICE=pdfwrite',
                  '-dCompatibilityLevel=1.4', '-dPDFSETTINGS=/' + preset,
                  '-sOutputFile=' + str(output), str(paths[0])])
             if output.is_file() and output.stat().st_size >= len(files[0][1]):
