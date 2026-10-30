@@ -18,6 +18,7 @@ DEFAULT_TYPES = [".py", ".ipynb", ".js", ".mjs", ".ts", ".jsx", ".tsx", ".java",
 SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache"}
 MAX_READ = 2_000_000
 MAX_WRITE = 1_000_000
+MAX_IMPORT = 25 * 1024 * 1024
 CHUNK = 22_000
 RUN_TIMEOUT = 300
 RUN_OUTPUT = 20_000
@@ -74,7 +75,7 @@ class ProjectAccess:
         return "*" in self.types or path.name in self.types or any(
             t.startswith(".") and path.name.endswith(t) for t in self.types)
 
-    def path(self, rel, must_exist=True):
+    def path(self, rel, must_exist=True, check_type=True):
         rel = str(rel or "").strip().replace("\\", "/").lstrip("/")
         if not rel:
             raise ValueError("Give a file path relative to the project folder")
@@ -86,7 +87,7 @@ class ProjectAccess:
             raise ValueError("The .git folder is off limits")
         if must_exist and not resolved.is_file():
             raise ValueError(f"No such file: {rel}")
-        if not self.allowed_type(resolved):
+        if check_type and not self.allowed_type(resolved):
             raise ValueError(f"File type not allowed in the assistant's access settings: {resolved.name}")
         return resolved
 
@@ -157,6 +158,22 @@ class ProjectAccess:
         action = "edited" if existed else "created"
         self.changes.append({"action": action, "path": self.rel(p)})
         return {"path": self.rel(p), action: True, "backup": backup}
+
+    def import_file(self, rel, data):
+        """Copies a course file (DitLab, eClass, mail attachment) into the project. Any file type, as it is a copy of
+        material the student can already open, but never over an existing file."""
+        self.need("write")
+        if len(data) > MAX_IMPORT:
+            raise ValueError("File is larger than 25 MB")
+        p = self.path(rel, must_exist=False, check_type=False)
+        if p.exists():
+            raise ValueError(f"{self.rel(p)} already exists; choose another path")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.hub-tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, p)
+        self.changes.append({"action": "imported", "path": self.rel(p)})
+        return {"path": self.rel(p), "imported": True, "bytes": len(data)}
 
     def delete(self, rel):
         self.need("delete")

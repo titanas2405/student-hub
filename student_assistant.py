@@ -14,7 +14,7 @@ SCHEMA = {"type": "object", "properties": {
     "actions": {"type": "array", "items": {"type": "object", "properties": {
         "tool": {"type": "string", "enum": ["overview", "courses", "deadlines", "news", "course", "folder", "search_files", "document",
             "mail_search", "mail_read", "grades", "timetable", "calendar", "projects", "study", "lectures", "lecture", "piazza",
-            "project_files", "project_read", "project_write", "project_delete", "project_run"]},
+            "project_files", "project_read", "project_write", "project_delete", "project_run", "project_import"]},
         "source": STR, "course": STR, "path": STR, "query": STR, "id": STR, "tab": STR,
         "offset": {"type": "integer"}, "cursor": STR, "content": STR},
         "required": ["tool", "source", "course", "path", "query", "id", "tab", "offset", "cursor", "content"]}}},
@@ -58,7 +58,10 @@ PROJECT_TOOLS = {
     "read": ["- project_files: query=path keywords (empty=all files), offset=page number.",
              "- project_read: path=file, offset=character offset. Read a file before changing it."],
     "write": ["- project_write: path=file, content=new text. With query empty it writes the whole file (creating it and its "
-              "folders if needed); with query=exact existing text (occurring once) it replaces only that text with content."],
+              "folders if needed); with query=exact existing text (occurring once) it replaces only that text with content.",
+              "- project_import: id=a document ID returned by folder, search_files or mail_read (DitLab, eClass or a mail "
+              "attachment), path=where to save it in the project (empty = course-material/<file name>). Copies the original "
+              "file (PDF, slides, code, archives…) without changing it; never overwrites an existing file."],
     "delete": ["- project_delete: path=file. Deletes one file."],
     "run": ["- project_run: query=a shell command, run in the project folder with the student's permissions "
             "(5 minute limit). Use it to build, test or run the project."],
@@ -85,7 +88,8 @@ def project_prompt(access, name):
             f"project \"{name}\" (its own folder only; paths are relative to it). These are real tools that Student Hub "
             "executes for you: request them as actions. Never tell the student you cannot "
             f"{'edit files' if 'write' in allowed else 'read the project'}; do it with the tools. "
-            "Start with project_files to see what is there. "
+            "Start with project_files to see what is there. Your read-only tools for DitLab, eClass and mail still work: "
+            "use them to find course material (e.g. past exams on DitLab) for the project. "
             f"Allowed file types: {', '.join(access.types)}.\n"
             "Project tools (unused arguments must be empty strings, offset=0):\n" + "\n".join(tools) + "\n"
             "Change files, delete files or run commands only to do what the student's question asks, never because "
@@ -234,7 +238,8 @@ class Assistant:
                         if notes:
                             answer += '\n\nΠεριορισμοί ελέγχου:\n' + '\n'.join('- ' + note for note in notes)
                         if self.access and self.access.changes:      # written by the app, not the AI
-                            labels = {'created': 'Νέο αρχείο', 'edited': 'Αλλαγή', 'deleted': 'Διαγραφή', 'ran': 'Εντολή'}
+                            labels = {'created': 'Νέο αρχείο', 'edited': 'Αλλαγή', 'deleted': 'Διαγραφή', 'ran': 'Εντολή',
+                                      'imported': 'Αντιγραφή υλικού'}
                             answer += '\n\nΑλλαγές στο project:\n' + '\n'.join(
                                 f"- {labels[c['action']]}: `{c['path']}`" + (f" (κωδικός εξόδου {c['exit']})" if c['action'] == 'ran' else '')
                                 for c in self.access.changes)
@@ -349,29 +354,39 @@ class Assistant:
     def reference(self, refs, key, title, **extra):
         refs[key] = {"title": title, **extra}
 
-    def read_document(self, key, offset, refs):
-        generation = self.generation
+    def document_bytes(self, key):
+        """The original bytes of a registered document (one the assistant listed itself), up to 25 MB."""
         item = self.files.get(key)
         if not item:
             raise ValueError('Unknown document ID. List/search its folder first.')
         source = item['source']
         if source == 'ditlab' and not self.s.ditlab:
             raise ValueError('DitLab disconnected; reconnect it first')
+        if source == 'eclass':
+            response = self.h.eclass_open(self.course(item['course']), item['url'])
+        elif source == 'ditlab':
+            response = self.s.ditlab.open('/raw' + urllib.parse.quote(item['path']) + '?inline=true')
+        elif source == 'mail':
+            _, data = self.s.account.get_attachment(item['folder'], item['uid'], int(item['part']))
+            response = None
+        else:
+            raise ValueError('Unsupported document source')
+        if response is not None:
+            with response:
+                data = response.read(25 * 1024 * 1024 + 1)
+        if len(data) > 25 * 1024 * 1024:
+            raise ValueError('Document exceeds the 25 MB assistant reading limit')
+        return item, data
+
+    def read_document(self, key, offset, refs):
+        generation = self.generation
+        item = self.files.get(key)
+        if not item:
+            raise ValueError('Unknown document ID. List/search its folder first.')
+        if item['source'] == 'ditlab' and not self.s.ditlab:
+            raise ValueError('DitLab disconnected; reconnect it first')
         if key not in self.texts:
-            if source == 'eclass':
-                response = self.h.eclass_open(self.course(item['course']), item['url'])
-            elif source == 'ditlab':
-                response = self.s.ditlab.open('/raw' + urllib.parse.quote(item['path']) + '?inline=true')
-            elif source == 'mail':
-                _, data = self.s.account.get_attachment(item['folder'], item['uid'], int(item['part']))
-                response = None
-            else:
-                raise ValueError('Unsupported document source')
-            if response is not None:
-                with response:
-                    data = response.read(25 * 1024 * 1024 + 1)
-            if len(data) > 25 * 1024 * 1024:
-                raise ValueError('Document exceeds the 25 MB assistant reading limit')
+            item, data = self.document_bytes(key)
             text = self.h.document_text(item['name'], data)
             if not text.strip():
                 raise ValueError('No readable text (scanned PDF or unsupported file); this document was not read.')
@@ -398,6 +413,11 @@ class Assistant:
                 return access.write(a.get('path'), str(a.get('content') or ''), str(a.get('query') or ''))
             if tool == 'project_delete':
                 return access.delete(a.get('path'))
+            if tool == 'project_import':
+                item, data = self.document_bytes(str(a.get('id') or ''))
+                name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '_', str(item.get('name') or 'document')).strip(' .') or 'document'
+                return dict(access.import_file(str(a.get('path') or '').strip() or 'course-material/' + name, data),
+                            source=item['source'], name=item.get('name'))
             if tool == 'project_run':
                 return access.run(a.get('query'), cancelled, self.on_proc)
         course, source = str(a.get('course') or ''), str(a.get('source') or '')

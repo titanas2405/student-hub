@@ -6,7 +6,7 @@ const ASSISTANT_TOOLS = { overview: "Επισκόπηση", courses: "Μαθήμ
   news: "Ανακοινώσεις", folder: "Άνοιγμα φακέλου", search_files: "Αναζήτηση σε υποφακέλους", document: "Ανάγνωση εγγράφου",
   mail_search: "Αναζήτηση email", mail_read: "Ανάγνωση email", grades: "Βαθμολογίες", timetable: "Πρόγραμμα",
   calendar: "Ημερολόγιο", projects: "Projects", study: "Κάρτες μελέτης", lectures: "Βιντεοδιαλέξεις", lecture: "Κείμενο διάλεξης", piazza: "Piazza",
-  project_files: "Αρχεία project", project_read: "Ανάγνωση αρχείου", project_write: "Εγγραφή αρχείου", project_delete: "Διαγραφή αρχείου", project_run: "Εντολή" };
+  project_files: "Αρχεία project", project_read: "Ανάγνωση αρχείου", project_write: "Εγγραφή αρχείου", project_delete: "Διαγραφή αρχείου", project_run: "Εντολή", project_import: "Αντιγραφή στο project" };
 const assistantTool = (entry) => {
   const [tool, ...rest] = String(entry).split(": ");
   return (ASSISTANT_TOOLS[tool] || tool) + (rest.length ? ": " + rest.join(": ") : "");

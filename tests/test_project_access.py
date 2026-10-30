@@ -97,6 +97,35 @@ class AccessTests(unittest.TestCase):
             pa.parse_args('"unclosed')
 
 
+class ImportTests(unittest.TestCase):
+    def test_ditlab_file_is_copied_into_the_project_only_with_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "proj"
+            root.mkdir()
+            ditlab = Mock()
+            ditlab.list.return_value = {"items": [{"name": "exam 2024/Ιούνιος.pdf", "path": "/OS/exam.pdf", "isDir": False}]}
+            ditlab.open.side_effect = lambda url: __import__("io").BytesIO(b"%PDF-1.4 exam")
+            session = SimpleNamespace(inst="uoa", account=Mock(mail=False), ditlab=ditlab, eclass=None,
+                                      piazza=None, portal=None, assistant=None)
+            assistant = Assistant(server, session)
+            found = assistant.retrieve({"tool": "search_files", "source": "ditlab", "query": "exam"}, {})
+            doc = found["files"][0]["id"]
+            assistant.access = pa.ProjectAccess(root, {"read"}, [".py"], Path(d) / "b")
+            with self.assertRaises(PermissionError):
+                assistant.retrieve({"tool": "project_import", "id": doc}, {})
+            assistant.access = pa.ProjectAccess(root, {"read", "write"}, [".py"], Path(d) / "b")
+            r = assistant.retrieve({"tool": "project_import", "id": doc}, {})
+            self.assertEqual(r["path"], "course-material/exam 2024_Ιούνιος.pdf")      # a PDF, though only .py is allowed
+            self.assertEqual((root / r["path"]).read_bytes(), b"%PDF-1.4 exam")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                assistant.retrieve({"tool": "project_import", "id": doc}, {})
+            with self.assertRaisesRegex(ValueError, "outside the project"):
+                assistant.retrieve({"tool": "project_import", "id": doc, "path": "../stolen.pdf"}, {})
+            with self.assertRaisesRegex(ValueError, "Unknown document"):
+                assistant.retrieve({"tool": "project_import", "id": "/etc/passwd"}, {})
+            self.assertEqual(assistant.access.changes, [{"action": "imported", "path": r["path"]}])
+
+
 class ChatTests(unittest.TestCase):
     def test_chat_writes_and_runs_only_with_access_and_lists_changes(self):
         with tempfile.TemporaryDirectory() as d:
