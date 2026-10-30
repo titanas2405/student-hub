@@ -6798,7 +6798,14 @@ def setup_report(check_port=True, check_tls=True):
         "download it from ghostscript.com/releases/gsdnld.html" if win else installer, area="documents")
     poppler = student_tools.find_program("pdfinfo")
     row(bool(poppler), "Poppler", poppler or "not found (PDF merge/split, PDF text)", installer, area="documents")
-    row(WHISPER_PY.exists(), "Whisper", str(WHISPER_PY) if WHISPER_PY.exists() else "not installed (local lecture subtitles; a Groq key also works)",
+    whisper = WHISPER_PY.exists()
+    if whisper:                                   # the folder alone isn't enough: a failed install leaves one
+        try:
+            whisper = subprocess.run([str(WHISPER_PY), "-c", "import faster_whisper"], capture_output=True, timeout=60).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            whisper = False
+    row(whisper, "Whisper", str(WHISPER_PY) if whisper else
+        ("installed but not working" if WHISPER_PY.exists() else "not installed") + " (local lecture subtitles; a Groq key also works)",
         installer, area="lectures")
     if win:
         row(TLS_KIND == "truststore", "Certificate checks",

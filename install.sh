@@ -81,11 +81,16 @@ fi
 
 step "Whisper (lecture subtitles on this computer)"
 WHISPER="${XDG_DATA_HOME:-$HOME/.local/share}/student-hub/whisper"
-if [ -x "$WHISPER/bin/python" ]; then info "Already installed."
+whisper_ok() { [ -x "$WHISPER/bin/python" ] && "$WHISPER/bin/python" -c "import faster_whisper" 2>/dev/null; }
+if whisper_ok; then info "Already installed."
 else
-  info "Installing faster-whisper. This takes a few minutes."
-  python3 -m venv "$WHISPER" && "$WHISPER/bin/pip" install --disable-pip-version-check -q faster-whisper && info "Ready." \
-    || warn "Whisper could not be installed."
+  rm -rf "$WHISPER"
+  # Whisper's libraries need a Python they have builds for: prefer 3.12, 3.11 or 3.13 when installed.
+  wpy=python3
+  for v in python3.12 python3.11 python3.13; do have "$v" && { wpy=$v; break; }; done
+  info "Installing faster-whisper with $($wpy --version). This takes a few minutes."
+  "$wpy" -m venv "$WHISPER" && "$WHISPER/bin/pip" install --disable-pip-version-check -q faster-whisper
+  if whisper_ok; then info "Ready."; else rm -rf "$WHISPER"; warn "Whisper could not be installed (it needs Python 3.10-3.13)."; fi
 fi
 
 step "Start button (applications menu and desktop)"

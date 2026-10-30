@@ -23,7 +23,7 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           for program in git gh soffice gs pdfinfo claude codex gemini; do command -v "$program"; done
-          test -x "$HOME/.local/share/student-hub/whisper/bin/python"
+          "$HOME/.local/share/student-hub/whisper/bin/python" -c "import faster_whisper, av, numpy"
           test -f "$HOME/.local/share/applications/student-hub.desktop"
           python3 server.py --check
 
@@ -38,13 +38,13 @@ jobs:
         shell: pwsh
         run: |
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          & "$env:LOCALAPPDATA\student-hub\whisper\Scripts\python.exe" -c "import faster_whisper, av, numpy"
+          if ($LASTEXITCODE) { 'Whisper does not work'; exit 1 }
           py -3 -c "import truststore"
           if ($LASTEXITCODE) { 'truststore missing'; exit 1 }
           $need = @{
             'Claude' = "$env:USERPROFILE\.local\bin\claude.exe"
             'LibreOffice' = "$env:ProgramFiles\LibreOffice\program\soffice.exe"
-            'Codex' = "$env:APPDATA\npm\codex.cmd"
-            'Gemini' = "$env:APPDATA\npm\gemini.cmd"
             'Whisper' = "$env:LOCALAPPDATA\student-hub\whisper\Scripts\python.exe"
             'Start icon' = [Environment]::GetFolderPath('Desktop') + '\Student Hub.lnk'
           }

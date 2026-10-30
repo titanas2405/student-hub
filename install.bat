@@ -120,14 +120,32 @@ if ($npm) {
 } else { Warn 'Node.js is missing, so Codex and Gemini were skipped.' }
 
 Step 'Whisper (lecture subtitles on this computer)'
+# Whisper's libraries need a Python they have builds for, so it gets its own Python 3.12 environment.
 $whisper = Join-Path $env:LOCALAPPDATA 'student-hub\whisper'
 $whisperPy = Join-Path $whisper 'Scripts\python.exe'
-if (Test-Path $whisperPy) { Info 'Already installed.' }
+function Test-Whisper {
+    if (-not (Test-Path $whisperPy)) { return $false }
+    & $whisperPy -c "import faster_whisper" *> $null
+    return $LASTEXITCODE -eq 0
+}
+if (Test-Whisper) { Info 'Already installed.' }
 else {
-    Info 'Installing faster-whisper. This takes a few minutes.'
-    Invoke-Python -m venv $whisper
-    & $whisperPy -m pip install --disable-pip-version-check --quiet faster-whisper
-    if ($LASTEXITCODE -ne 0) { Warn 'Whisper could not be installed.' } else { Info 'Ready.' }
+    if (Test-Path $whisper) { Remove-Item -Recurse -Force $whisper }
+    $launcher = Find-Program 'py'
+    $version = $null
+    foreach ($v in '3.12', '3.11', '3.13') { if (-not $version -and (Test-Python $launcher @("-$v"))) { $version = $v } }
+    if (-not $version) {
+        Install-WithWinget 'Python.Python.3.12' 'Python 3.12 (for Whisper)' | Out-Null
+        $launcher = Find-Program 'py'
+        if (Test-Python $launcher @('-3.12')) { $version = '3.12' }
+    }
+    if ($version) {
+        Info "Installing faster-whisper with Python $version. This takes a few minutes."
+        & $launcher "-$version" -m venv $whisper
+        & $whisperPy -m pip install --disable-pip-version-check --quiet faster-whisper
+        if (Test-Whisper) { Info 'Ready.' }
+        else { Warn 'Whisper could not be installed.'; Remove-Item -Recurse -Force $whisper -ErrorAction SilentlyContinue }
+    } else { Warn 'Whisper needs Python 3.12, which could not be installed.' }
 }
 
 Step 'Start button on the desktop'
