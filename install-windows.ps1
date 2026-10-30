@@ -27,14 +27,14 @@ function Add-UserPath($folder) {
     }
     Refresh-Path
 }
-function Winget($id, $name) {
-    if (-not (Have winget)) {
+function Install-WithWinget($id, $name) {   # not named 'winget': PowerShell would call this function instead
+    if (-not (Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue)) {
         Warn "$name not installed: winget is missing (install 'App Installer' from the Microsoft Store)."
         return $false
     }
     Info "Installing $name with winget. This can take a few minutes."
     Info "If Windows asks for permission (a shield icon may blink in the taskbar), click Yes."
-    winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent
+    winget.exe install -e --id $id --accept-source-agreements --accept-package-agreements --silent | Out-Host   # shown, not returned
     $code = $LASTEXITCODE
     Refresh-Path
     # -1978335189 (0x8A15002B): already installed, nothing newer.
@@ -42,9 +42,14 @@ function Winget($id, $name) {
     Warn "$name could not be installed by winget (code $code)."
     return $false
 }
+function Find-Program($name) {   # the real program's full path, never a function or alias of the same name
+    $found = Get-Command "$name.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.Source }
+    return $null
+}
 function Test-Python($exe, $extra) {
-    if (-not (Have $exe)) { return $false }
-    if ((Get-Command $exe).Source -like '*\WindowsApps\*') { return $false }   # the Microsoft Store shortcut, not a real Python
+    if (-not $exe) { return $false }
+    if ($exe -like '*\WindowsApps\*') { return $false }   # the Microsoft Store shortcut, not a real Python
     & $exe @extra -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" *> $null
     return $LASTEXITCODE -eq 0
 }
@@ -55,13 +60,13 @@ Info 'No questions: it installs everything recommended. A log is saved in instal
 # 1. Python
 Step 'Python'
 $pyExe = $null; $pyArgs = @()
-if (Test-Python 'py' @('-3')) { $pyExe = 'py'; $pyArgs = @('-3') }
-elseif (Test-Python 'python' @()) { $pyExe = 'python' }
+if (Test-Python (Find-Program 'py') @('-3')) { $pyExe = Find-Program 'py'; $pyArgs = @('-3') }
+elseif (Test-Python (Find-Program 'python') @()) { $pyExe = Find-Program 'python' }
 else {
     Info 'Python 3.9 or newer was not found.'
-    if (Winget 'Python.Python.3.12' 'Python 3.12') {
-        if (Test-Python 'py' @('-3')) { $pyExe = 'py'; $pyArgs = @('-3') }
-        elseif (Test-Python 'python' @()) { $pyExe = 'python' }
+    if (Install-WithWinget 'Python.Python.3.12' 'Python 3.12') {
+        if (Test-Python (Find-Program 'py') @('-3')) { $pyExe = Find-Program 'py'; $pyArgs = @('-3') }
+        elseif (Test-Python (Find-Program 'python') @()) { $pyExe = Find-Program 'python' }
     }
 }
 if (-not $pyExe) {
@@ -69,33 +74,33 @@ if (-not $pyExe) {
     Stop-Transcript | Out-Null
     exit 1
 }
-function Py { & $pyExe @pyArgs @args }
-Info "Using: $(Py --version 2>&1) ($pyExe $pyArgs)"
+function Invoke-Python { & $pyExe @pyArgs @args }   # not named 'py': that would call itself
+Info "Using: $(Invoke-Python --version 2>&1) ($pyExe $pyArgs)"
 
 # 2. truststore: Windows' own certificate checks for the university servers
 Step 'Certificate checks for the university servers (truststore)'
-Py -c "import truststore" *> $null
+Invoke-Python -c "import truststore" *> $null
 if ($LASTEXITCODE -eq 0) { Info 'Already installed.' }
 else {
-    Py -m pip install --user --disable-pip-version-check --quiet truststore
-    Py -c "import truststore" *> $null
+    Invoke-Python -m pip install --user --disable-pip-version-check --quiet truststore
+    Invoke-Python -c "import truststore" *> $null
     if ($LASTEXITCODE -eq 0) { Info 'Installed.' } else { Warn 'truststore could not be installed (mail may show certificate errors).' }
 }
 
 # 3-4. Projects
 Step 'Git'
-if (Have git) { Info "Already installed: $((Get-Command git).Source)" } else { Winget 'Git.Git' 'Git' | Out-Null }
+if (Have git) { Info "Already installed: $((Get-Command git).Source)" } else { Install-WithWinget 'Git.Git' 'Git' | Out-Null }
 Step 'GitHub CLI'
-if (Have gh) { Info "Already installed: $((Get-Command gh).Source)" } else { Winget 'GitHub.cli' 'GitHub CLI' | Out-Null }
+if (Have gh) { Info "Already installed: $((Get-Command gh).Source)" } else { Install-WithWinget 'GitHub.cli' 'GitHub CLI' | Out-Null }
 
 # 5. Documents and PDFs
 Step 'LibreOffice, Ghostscript and Poppler (Word to PDF, PDF tools)'
 if (Test-Path "$env:ProgramFiles\LibreOffice\program\soffice.exe") { Info 'LibreOffice is already installed.' }
-else { Winget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' | Out-Null }
+else { Install-WithWinget 'TheDocumentFoundation.LibreOffice' 'LibreOffice' | Out-Null }
 if ((Have gswin64c) -or (Test-Path "$env:ProgramFiles\gs")) { Info 'Ghostscript is already installed.' }
-else { Winget 'ArtifexSoftware.GhostScript' 'Ghostscript' | Out-Null }
+else { Install-WithWinget 'ArtifexSoftware.GhostScript' 'Ghostscript' | Out-Null }
 if (Have pdfinfo) { Info 'Poppler is already installed.' }
-elseif (Winget 'oschwartz10612.Poppler' 'Poppler') {
+elseif (Install-WithWinget 'oschwartz10612.Poppler' 'Poppler') {
     $poppler = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter pdfinfo.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($poppler) { Add-UserPath $poppler.DirectoryName; Info "Poppler added to PATH: $($poppler.DirectoryName)" }
 }
@@ -117,7 +122,7 @@ $whisperDir = Join-Path $env:LOCALAPPDATA 'student-hub\whisper'
 if (Test-Path (Join-Path $whisperDir 'Scripts\python.exe')) { Info 'Already installed.' }
 elseif ($Whisper) {
     Info 'Installing faster-whisper (a few minutes)...'
-    Py -m venv $whisperDir
+    Invoke-Python -m venv $whisperDir
     & (Join-Path $whisperDir 'Scripts\python.exe') -m pip install --disable-pip-version-check --quiet faster-whisper
     if ($LASTEXITCODE -ne 0) { Warn 'Whisper could not be installed.' }
 }
@@ -137,7 +142,7 @@ try {
 
 # 9. Setup check
 Step 'Setup check'
-Py -X utf8 server.py --check
+Invoke-Python -X utf8 server.py --check
 $checkFailed = $LASTEXITCODE -ne 0
 
 Stop-Transcript | Out-Null
